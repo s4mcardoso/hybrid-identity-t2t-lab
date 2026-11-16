@@ -607,6 +607,4 @@ Profissional de TI na área de migrações Microsoft 365 tenant-to-tenant. Estud
 
 [LinkedIn](www.linkedin.com/in/samcardosoti) · [GitHub](https://github.com/s4mcardoso)
 
-Interesses: Microsoft Azure, identidade híbrida, Microsoft Entra ID, Active Directory, migrações Microsoft 365 e automação com PowerShell.
-
 > **Aviso:** este repositório documenta um **laboratório fictício, feito apenas para estudo**. Empresas, domínios, usuários e cenário são inventados e não correspondem a nenhuma organização ou projeto real. O projeto não tem vínculo com a Microsoft nem com a Quest Software. Teste qualquer procedimento em ambiente controlado antes de usar em produção.
