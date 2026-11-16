@@ -38,7 +38,7 @@ Projeto de estudo pessoal. Montei do zero um ambiente híbrido com duas floresta
 5. [Cenário simulado](#5-cenário-simulado)
 6. [Objetivo técnico](#6-objetivo-técnico)
 7. [Arquitetura do laboratório](#7-arquitetura-do-laboratório)
-8. [Estratégia de identidade (o pulo do gato)](#8-estratégia-de-identidade-o-pulo-do-gato)
+8. [Estratégia de identidade](#8-estratégia-de-identidade)
 9. [Pré-requisitos](#9-pré-requisitos)
 10. [Passo a passo](#10-passo-a-passo)
 11. [Validação](#11-validação)
@@ -72,7 +72,7 @@ O que eu queria aprender:
 | Área | O que pratiquei | Onde ver |
 |---|---|---|
 | Identidade híbrida | Instalação customizada do Entra Connect Sync, Password Hash Sync, escolha e conferência do Source Anchor | [Fases 2 e 4](#10-passo-a-passo) |
-| Arquitetura de identidade | Estratégia para manter o `immutableId` igual em dois tenants usando o `ms-DS-ConsistencyGuid` | [Seção 8](#8-estratégia-de-identidade-o-pulo-do-gato) |
+| Arquitetura de identidade | Estratégia para manter o `immutableId` igual em dois tenants usando o `ms-DS-ConsistencyGuid` | [Seção 8](#8-estratégia-de-identidade) |
 | Active Directory | Duas florestas, contas Enterprise Admin, sufixos UPN, atributos de usuário | [Seção 9](#9-pré-requisitos) |
 | Redes e DNS | Rede NAT isolada, DNS por floresta, encaminhadores condicionais | [Seção 9.1](#91-infraestrutura) |
 | Kerberos e horário | Falha de autenticação causada por diferença de relógio; ajuste de NTP e fuso horário | [Problema 3](#problema-3-o-ms-ds-consistencyguid-não-é-gravado-no-ad) |
@@ -169,7 +169,7 @@ flowchart TB
 
 ---
 
-## 8. Estratégia de identidade (o pulo do gato)
+## 8. Estratégia de identidade
 
 O `onPremisesImmutableId` de um usuário sincronizado é o valor do Source Anchor convertido para Base64. Se cada Entra Connect usasse um atributo diferente como anchor, o mesmo usuário ficaria com um ID em cada tenant.
 
