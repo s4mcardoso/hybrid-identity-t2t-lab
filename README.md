@@ -20,7 +20,7 @@ Projeto de estudo pessoal. Montei do zero um ambiente híbrido com duas floresta
 |---|---|
 | **O que montei** | 6 servidores Windows Server 2022, 2 florestas Active Directory e 2 tenants Microsoft 365, simulando a separação de uma empresa de um grupo corporativo. |
 | **Problema** | Sincronizar a mesma floresta para dois tenants ao mesmo tempo, mantendo o mesmo identificador imutável para cada usuário nos dois lados. Sem isso, a migração gera contas duplicadas. |
-| **Resultado** | Identidades pareadas e validadas por script nos dois tenants, regras de sincronização customizadas e cinco problemas diagnosticados e documentados. |
+| **Resultado** | Identidades pareadas e validadas por script nos dois tenants, regras de sincronização customizadas e seis problemas diagnosticados e documentados. |
 | **Competências** | Entra Connect Sync, Active Directory multi-floresta, DNS, Kerberos e NTP, regras de sincronização, PowerShell e documentação técnica. |
 
 ---
@@ -78,7 +78,7 @@ O que eu queria aprender:
 | Kerberos e horário | Falha de autenticação causada por diferença de relógio; ajuste de NTP e fuso horário | [Problema 3](#problema-3-o-ms-ds-consistencyguid-não-é-gravado-no-ad) |
 | Regras de sincronização | Regras outbound no Synchronization Rules Editor com expressões e `AuthoritativeNull` | [Fase 5](#fase-5-regras-de-transformação-customizadas) |
 | PowerShell | Scripts de conferência no AD, no ADSync e no Microsoft Graph; comparação de dados entre tenants | [Seção 11](#11-validação) |
-| Troubleshooting | Cinco problemas analisados de sintoma até prevenção | [Seção 12](#12-resolução-de-problemas) |
+| Troubleshooting | Seis problemas analisados de sintoma até prevenção | [Seção 12](#12-resolução-de-problemas) |
 | Virtualização | 6 VMs no VMware Workstation, com snapshots para voltar atrás | [Seção 7](#7-arquitetura-do-laboratório) |
 
 ---
@@ -92,6 +92,7 @@ Versão curta dos problemas mais importantes. Os detalhes estão na [seção 12]
 | O atributo que garante o match entre os tenants não era gravado no AD, e nenhum erro claro aparecia | Investiguei a autenticação entre o servidor e o DC e encontrei uma diferença de relógio maior que a tolerância do Kerberos | Corrigi fuso e NTP, o atributo passou a ser gravado e conferi usuário por usuário |
 | O segundo Entra Connect escolheu sozinho o identificador errado | Percebi o comportamento do assistente antes de liberar a sincronização | Reinstalei com o atributo certo e o Tenant B não recebeu nenhum ID divergente |
 | O Tenant B não aceitaria atributos com o domínio `.lab` | Criei três regras outbound (UPN, `mail` e `proxyAddresses`) | Usuários criados no Tenant B com UPN válido e sem erro de exportação |
+| As regras de e-mail pareciam funcionar, porque o Export ficava verde, mas o `@nexus.lab` continuava sendo enviado | Coloquei um e-mail em um usuário de teste e conferi o objeto no connector space antes e depois | Troquei `NULL` por `AuthoritativeNull` e comprovei a remoção dos atributos (`delete`) |
 | Erro WAM na autenticação do assistente e erro de floresta "inexistente" | Separei as causas: fluxo do WAM em um caso, credencial e DNS no outro | Instalação concluída e prevenção documentada |
 
 ---
@@ -355,6 +356,8 @@ Exemplo: `joao.silva@nexus.lab` vira `joao.silva@<tenantb>.onmicrosoft.com`. O `
 
 > [!IMPORTANT]
 > Para deixar um atributo vazio no Entra Connect, use a constante `AuthoritativeNull`. Um `NULL` comum significa "esta regra não envia nada", e aí a regra padrão, de precedência mais baixa, manda o valor original. Com o atributo vazio, o Tenant B cria o endereço `@<tenantb>.onmicrosoft.com` e não dá erro de domínio não verificado.
+>
+> Na primeira versão do laboratório eu usei `NULL` nas regras 2 e 3, e o problema só apareceu quando testei com um usuário que tinha e-mail. Veja o [problema 6](#problema-6-as-regras-com-null-não-removiam-o-e-mail).
 
 ---
 
@@ -524,6 +527,35 @@ Depois, conferir com o script da [seção 11.1](#111-ms-ds-consistencyguid-grava
 
 ---
 
+### Problema 6: as regras com `NULL` não removiam o e-mail
+
+| | |
+|---|---|
+| **Sintoma** | As regras de `mail` e `proxyAddresses` estavam criadas e o Export terminava com *success*, mas o e-mail `@nexus.lab` continuava indo para o Tenant B. O problema ficou escondido porque os usuários de teste não tinham e-mail no AD. |
+| **Causa** | No Entra Connect, uma regra que devolve `NULL` é tratada como "não contribui". A regra padrão, de precedência maior, continuava enviando o valor original. Além disso, o Entra ID aceita esse valor sem erro, então o Export verde não provava nada. |
+| **Solução** | Editar as regras 2 e 3 e trocar o Source de `NULL` para `AuthoritativeNull`, depois rodar `Start-ADSyncSyncCycle -PolicyType Initial`. |
+
+**Como reproduzi e validei:**
+
+```powershell
+# No DC02-Nexus: dar um e-mail a um usuário de teste
+Set-ADUser teste.nexus8 -EmailAddress 'teste.nexus8@nexus.lab' -Add @{ proxyAddresses = 'SMTP:teste.nexus8@nexus.lab' }
+
+# No SRV-ADC-Nexus: sincronizar
+Start-ADSyncSyncCycle -PolicyType Delta
+```
+
+Depois, em Synchronization Service Manager > Connectors > conector do Tenant B > *Search Connector Space*, abri o objeto do usuário:
+
+| Com `NULL` | Com `AuthoritativeNull` |
+|---|---|
+| `mail` aparece como **add** com `teste.nexus8@nexus.lab` | `mail` e `proxyAddresses` aparecem como **delete** |
+| ![Regra com NULL: mail adicionado](docs/img/06a-mail-antes.png) | ![Regra com AuthoritativeNull: mail removido](docs/img/06b-mail-depois.png) |
+
+**Prevenção:** testar regras de transformação com um objeto que tenha o atributo preenchido e conferir o connector space, sem confiar só no status do Export.
+
+---
+
 ## 13. Lições aprendidas
 
 1. **A ordem de instalação faz parte da arquitetura.** O primeiro Entra Connect grava o atributo no AD e o segundo só lê. Se a ordem muda, ou se o segundo servidor escolhe o anchor sozinho, o match se perde.
@@ -531,7 +563,8 @@ Depois, conferir com o script da [seção 11.1](#111-ms-ds-consistencyguid-grava
 3. **Horário também é infraestrutura.** Um fuso errado parece detalhe, mas derruba o Kerberos e, junto, a gravação no AD. Fuso e NTP agora entram no meu checklist antes de qualquer instalação.
 4. **Em ambiente com várias florestas, começo por DNS e formato de credencial.** Encaminhadores condicionais e usuário no formato UPN evitam o erro enganoso de floresta inexistente.
 5. **A sincronização só é liberada depois das regras.** Desmarcar a opção de iniciar a sincronização evita mandar atributos inválidos para o tenant e ter que corrigir depois.
-6. **`AuthoritativeNull` e `NULL` não são a mesma coisa.** Para apagar um atributo, a regra de maior prioridade precisa usar `AuthoritativeNull`.
+6. **`AuthoritativeNull` e `NULL` não são a mesma coisa.** Para apagar um atributo, a regra de maior prioridade precisa usar `AuthoritativeNull`. Aprendi isso na prática: com `NULL`, o e-mail continuava indo para o tenant e nada indicava erro.
+9. **Export com *success* não quer dizer que a regra funcionou.** A prova está no connector space, testando com um objeto que tenha o atributo preenchido.
 7. **Entra Connect Sync em vez de Cloud Sync** quando o cenário exige escolher o Source Anchor e criar regras próprias.
 8. **Conferir com script.** Comparar o `immutableId` dos dois tenants por PowerShell me deu muito mais segurança do que olhar alguns usuários no portal.
 
@@ -556,15 +589,27 @@ O laboratório tem simplificações que não caberiam em produção. Anotar essa
 
 Capturas de tela do laboratório, com os nomes dos tenants ocultos.
 
-| Evidência | Arquivo |
-|---|---|
-| Source Anchor `mS-DS-ConsistencyGuid` escolhido no `SRV-ADC-Nexus` | `docs/img/01-source-anchor.png` |
-| Atributo `ms-DS-ConsistencyGuid` preenchido no `DC02-Nexus` | `docs/img/02-consistencyguid-ad.png` |
-| Regras outbound no Synchronization Rules Editor | `docs/img/03-sync-rules.png` |
-| Ciclo de sincronização com status *success* | `docs/img/04-sync-success.png` |
-| Comparação do `onPremisesImmutableId` entre os tenants | `docs/img/05-immutableid-match.png` |
+### 15.1 O `ms-DS-ConsistencyGuid` gravado no AD
 
-<!-- Para exibir uma imagem: ![Descrição](docs/img/01-source-anchor.png) -->
+Attribute Editor do usuário Teste Nexus 8 no `DC02-Nexus`, com o atributo preenchido pelo Entra Connect de origem.
+
+![Attribute Editor com mS-DS-ConsistencyGuid](docs/img/01-attribute-editor.png)
+
+### 15.2 O mesmo valor no AD e no Tenant B
+
+No AD, o `ms-DS-ConsistencyGuid` convertido para Base64 dá `ELKIWlsVPEutQV96hh8idw==`:
+
+![ImmutableId calculado no AD](docs/img/02-immutableid-ad.png)
+
+No connector space do Tenant B, o `sourceAnchor` enviado pelo `SRV-ADC-Nexus` é o mesmo valor, e o UPN já está reescrito pela regra 1:
+
+![Connector space do Tenant B](docs/img/03-connector-space-tenantb.png)
+
+Um detalhe curioso: o nome do objeto no conector, `CN={454C4B4957...}`, é o próprio `sourceAnchor` escrito em hexadecimal (`45` = E, `4C` = L, `4B` = K, `49` = I, `57` = W...).
+
+### 15.3 Correção das regras de e-mail
+
+Os prints de antes e depois estão no [problema 6](#problema-6-as-regras-com-null-não-removiam-o-e-mail).
 
 ---
 
@@ -605,6 +650,6 @@ Próximas ações:
 **Samuel Cardoso de Oliveira**
 Profissional de TI na área de migrações Microsoft 365 tenant-to-tenant. Estudante de Análise e Desenvolvimento de Sistemas | Facens - Faculdade de Engenharia de Sorocaba.
 
-[LinkedIn](www.linkedin.com/in/samcardosoti) · [GitHub](https://github.com/s4mcardoso)
+[LinkedIn](https://www.linkedin.com/in/samcardosoti/) · [GitHub](https://github.com/s4mcardoso)
 
 > **Aviso:** este repositório documenta um **laboratório fictício, feito apenas para estudo**. Empresas, domínios, usuários e cenário são inventados e não correspondem a nenhuma organização ou projeto real. O projeto não tem vínculo com a Microsoft nem com a Quest Software. Teste qualquer procedimento em ambiente controlado antes de usar em produção.
