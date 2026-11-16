@@ -6,7 +6,7 @@
 ![Quest ODM](https://img.shields.io/badge/Quest-On%20Demand%20Migration-E1251B)
 ![PowerShell](https://img.shields.io/badge/PowerShell-5391FE?logo=powershell&logoColor=white)
 
-Projeto de estudo pessoal. Montei do zero um ambiente híbrido com duas florestas Active Directory e dois tenants Microsoft 365 para praticar as etapas de identidade de uma migração tenant-to-tenant. Aqui estão a arquitetura, as decisões que tomei, os erros que apareceram no caminho e como resolvi cada um.
+Projeto de estudo pessoal. Montei do zero um ambiente com duas florestas Active Directory e dois tenants Microsoft 365 para praticar a parte de identidade de uma migração tenant-to-tenant. Aqui registrei como montei, o que decidi e o que deu errado no caminho.
 
 > [!CAUTION]
 > **Este é um laboratório fictício, criado exclusivamente para fins de estudo.**
@@ -18,118 +18,95 @@ Projeto de estudo pessoal. Montei do zero um ambiente híbrido com duas floresta
 
 | | |
 |---|---|
-| **O que montei** | 6 servidores Windows Server 2022, 2 florestas Active Directory e 2 tenants Microsoft 365, simulando a separação de uma empresa de um grupo corporativo. |
-| **Problema** | Sincronizar a mesma floresta para dois tenants ao mesmo tempo, mantendo o mesmo identificador imutável para cada usuário nos dois lados. Sem isso, a migração gera contas duplicadas. |
-| **Resultado** | Identidades pareadas e validadas por script nos dois tenants, regras de sincronização customizadas e seis problemas diagnosticados e documentados. |
-| **Competências** | Entra Connect Sync, Active Directory multi-floresta, DNS, Kerberos e NTP, regras de sincronização, PowerShell e documentação técnica. |
+| **O que montei** | 6 servidores Windows Server 2022, 2 florestas Active Directory e 2 tenants Microsoft 365, simulando a separação de uma empresa de um grupo. |
+| **O problema** | Sincronizar a mesma floresta para dois tenants ao mesmo tempo, com o mesmo identificador para cada usuário nos dois lados. Sem isso, a migração gera contas duplicadas. |
+| **Resultado** | Identidades com o mesmo `immutableId` nos dois tenants, conferido por script, regras de sincronização próprias e cinco problemas resolvidos e documentados. |
 
 ---
 
 ## Sumário
 
-**Sobre o projeto**
-1. [Motivação](#1-motivação)
-2. [Competências desenvolvidas](#2-competências-desenvolvidas)
-3. [Principais desafios](#3-principais-desafios)
-4. [Tecnologias utilizadas](#4-tecnologias-utilizadas)
-
-**Documentação técnica**
-
-5. [Cenário simulado](#5-cenário-simulado)
-6. [Objetivo técnico](#6-objetivo-técnico)
-7. [Arquitetura do laboratório](#7-arquitetura-do-laboratório)
-8. [Estratégia de identidade](#8-estratégia-de-identidade)
-9. [Pré-requisitos](#9-pré-requisitos)
-10. [Passo a passo](#10-passo-a-passo)
-11. [Validação](#11-validação)
-12. [Resolução de problemas](#12-resolução-de-problemas)
-
-**Aprendizado**
-
-13. [Lições aprendidas](#13-lições-aprendidas)
-14. [O que eu faria diferente em um projeto real](#14-o-que-eu-faria-diferente-em-um-projeto-real)
-15. [Evidências](#15-evidências)
-16. [Status e próximos passos](#16-status-e-próximos-passos)
-17. [Referências](#17-referências)
+- [Por que fiz este laboratório](#por-que-fiz-este-laboratório)
+- [O que pratiquei](#o-que-pratiquei)
+- [Principais desafios](#principais-desafios)
+- [Cenário](#cenário)
+- [Arquitetura](#arquitetura)
+- [Estratégia de identidade](#estratégia-de-identidade)
+- [Pré-requisitos](#pré-requisitos)
+- [Passo a passo](#passo-a-passo)
+- [Validação](#validação)
+- [Resolução de problemas](#resolução-de-problemas)
+- [Lições aprendidas](#lições-aprendidas)
+- [O que eu faria diferente em um projeto real](#o-que-eu-faria-diferente-em-um-projeto-real)
+- [Evidências](#evidências)
+- [Status e próximos passos](#status-e-próximos-passos)
+- [Referências](#referências)
 
 ---
 
-## 1. Motivação
+## Por que fiz este laboratório
 
-Trabalho com migrações Microsoft 365 tenant-to-tenant. Queria entender o que acontece com as identidades antes da ferramenta de migração entrar em cena, então decidi reproduzir o cenário inteiro em casa.
+Trabalho com migrações Microsoft 365 tenant-to-tenant. Queria entender o que acontece com as identidades antes da ferramenta de migração entrar em cena, então montei o cenário inteiro em casa.
 
 O que eu queria aprender:
 
-- Como uma conta do AD local vira uma conta no Entra ID e o que mantém essa conta consistente entre dois tenants.
-- Instalar e customizar o Entra Connect Sync em um ambiente com mais de uma floresta.
-- Diagnosticar erros de verdade (autenticação, DNS, Kerberos, atributos) sem depender de um tutorial pronto.
-- Deixar tudo documentado de um jeito que eu consiga reaproveitar depois.
+- Como uma conta do AD local vira uma conta no Entra ID e o que mantém essa conta igual entre dois tenants.
+- Instalar e customizar o Entra Connect Sync com mais de uma floresta.
+- Resolver erros de verdade (autenticação, DNS, Kerberos, atributos) sem um tutorial dizendo o próximo passo.
+- Deixar tudo anotado para consultar depois.
 
 ---
 
-## 2. Competências desenvolvidas
+## O que pratiquei
 
-| Área | O que pratiquei | Onde ver |
+| Área | O que fiz | Onde ver |
 |---|---|---|
-| Identidade híbrida | Instalação customizada do Entra Connect Sync, Password Hash Sync, escolha e conferência do Source Anchor | [Fases 2 e 4](#10-passo-a-passo) |
-| Arquitetura de identidade | Estratégia para manter o `immutableId` igual em dois tenants usando o `ms-DS-ConsistencyGuid` | [Seção 8](#8-estratégia-de-identidade) |
-| Active Directory | Duas florestas, contas Enterprise Admin, sufixos UPN, atributos de usuário | [Seção 9](#9-pré-requisitos) |
-| Redes e DNS | Rede NAT isolada, DNS por floresta, encaminhadores condicionais | [Seção 9.1](#91-infraestrutura) |
-| Kerberos e horário | Falha de autenticação causada por diferença de relógio; ajuste de NTP e fuso horário | [Problema 3](#problema-3-o-ms-ds-consistencyguid-não-é-gravado-no-ad) |
+| Identidade híbrida | Instalação customizada do Entra Connect Sync, Password Hash Sync, escolha e conferência do Source Anchor | [Passo a passo](#passo-a-passo) |
+| Arquitetura de identidade | Estratégia para manter o `immutableId` igual em dois tenants usando o `ms-DS-ConsistencyGuid` | [Estratégia de identidade](#estratégia-de-identidade) |
+| Active Directory | Duas florestas, contas Enterprise Admin, atributos de usuário | [Pré-requisitos](#pré-requisitos) |
+| DNS | DNS por floresta e encaminhadores condicionais | [Infraestrutura](#infraestrutura) |
+| Kerberos e horário | Falha de autenticação causada por diferença de relógio | [Problema 3](#problema-3-o-ms-ds-consistencyguid-não-é-gravado-no-ad) |
 | Regras de sincronização | Regras outbound no Synchronization Rules Editor com expressões e `AuthoritativeNull` | [Fase 5](#fase-5-regras-de-transformação-customizadas) |
-| PowerShell | Scripts de conferência no AD, no ADSync e no Microsoft Graph; comparação de dados entre tenants | [Seção 11](#11-validação) |
-| Troubleshooting | Seis problemas analisados de sintoma até prevenção | [Seção 12](#12-resolução-de-problemas) |
-| Virtualização | 6 VMs no VMware Workstation, com snapshots para voltar atrás | [Seção 7](#7-arquitetura-do-laboratório) |
+| PowerShell | Scripts de conferência no AD, no ADSync e no Microsoft Graph | [Validação](#validação) |
+| Virtualização | 6 VMs no VMware Workstation, com snapshots para voltar atrás | [Arquitetura](#arquitetura) |
 
 ---
 
-## 3. Principais desafios
+## Principais desafios
 
-Versão curta dos problemas mais importantes. Os detalhes estão na [seção 12](#12-resolução-de-problemas).
+Os detalhes de cada um estão em [Resolução de problemas](#resolução-de-problemas).
 
 | Desafio | O que fiz | Resultado |
 |---|---|---|
-| O atributo que garante o match entre os tenants não era gravado no AD, e nenhum erro claro aparecia | Investiguei a autenticação entre o servidor e o DC e encontrei uma diferença de relógio maior que a tolerância do Kerberos | Corrigi fuso e NTP, o atributo passou a ser gravado e conferi usuário por usuário |
-| O segundo Entra Connect escolheu sozinho o identificador errado | Percebi o comportamento do assistente antes de liberar a sincronização | Reinstalei com o atributo certo e o Tenant B não recebeu nenhum ID divergente |
-| O Tenant B não aceitaria atributos com o domínio `.lab` | Criei três regras outbound (UPN, `mail` e `proxyAddresses`) | Usuários criados no Tenant B com UPN válido e sem erro de exportação |
-| As regras de e-mail pareciam funcionar, porque o Export ficava verde, mas o `@nexus.lab` continuava sendo enviado | Coloquei um e-mail em um usuário de teste e conferi o objeto no connector space antes e depois | Troquei `NULL` por `AuthoritativeNull` e comprovei a remoção dos atributos (`delete`) |
-| Erro WAM na autenticação do assistente e erro de floresta "inexistente" | Separei as causas: fluxo do WAM em um caso, credencial e DNS no outro | Instalação concluída e prevenção documentada |
+| O atributo que garante o match entre os tenants não era gravado no AD, e nenhum erro claro aparecia | Investiguei a autenticação entre o servidor e o DC e achei uma diferença de relógio maior que o Kerberos aceita | Corrigi fuso e NTP, e o atributo passou a ser gravado |
+| O segundo Entra Connect escolheu sozinho o identificador errado | Percebi antes de liberar a sincronização | Reinstalei com o atributo certo, e nenhum ID diferente chegou ao Tenant B |
+| As regras de e-mail pareciam funcionar porque o Export ficava verde, mas o `@nexus.lab` continuava indo para o Tenant B | Coloquei um e-mail em um usuário de teste e conferi o objeto no connector space antes e depois | Troquei `NULL` por `AuthoritativeNull` e vi os atributos saírem como `delete` |
+| Erro WAM no login do assistente e erro de floresta "inexistente" | Separei as causas: fluxo do WAM em um caso, senha e formato do usuário no outro | Instalação concluída |
 
 ---
 
-## 4. Tecnologias utilizadas
-
-- Microsoft Entra ID e Microsoft 365 (tenants de teste)
-- Microsoft Entra Connect Sync e Synchronization Rules Editor
-- Active Directory Domain Services e DNS no Windows Server 2022
-- Quest On Demand Migration (próxima fase)
-- PowerShell com os módulos `ActiveDirectory`, `ADSync` e `Microsoft.Graph`
-- VMware Workstation
-
----
-
-## 5. Cenário simulado
+## Cenário
 
 > *Cenário fictício, criado só para dar contexto ao laboratório.*
 
 A empresa Nexus (floresta `nexus.lab`) faz parte de um grupo. Todas as florestas do grupo sincronizam para um único tenant Microsoft 365, o Tenant Origem, pelo servidor `SRV-ADC-Acme`.
 
-A Nexus vai ser separada do grupo e ganha um tenant próprio, o Tenant B. As contas e os dados precisam ser migrados com o Quest ODM sem atrapalhar o dia a dia dos usuários.
+A Nexus vai sair do grupo e ganhar um tenant próprio, o Tenant B. As contas e os dados precisam ser migrados com o Quest ODM sem atrapalhar o dia a dia dos usuários.
 
-O ponto central é que cada usuário da Nexus precisa existir nos dois tenants com o mesmo identificador imutável (`onPremisesImmutableId`). Assim o mapeamento entre origem e destino fica previsível e não aparecem contas duplicadas.
+Para isso, cada usuário da Nexus precisa existir nos dois tenants com o mesmo `onPremisesImmutableId`. Assim o mapeamento entre origem e destino fica previsível e não aparecem contas duplicadas.
+
+O que o laboratório precisava entregar:
+
+- A floresta `nexus.lab` sincronizando para os dois tenants ao mesmo tempo, cada um com seu próprio Entra Connect Sync.
+- O mesmo `onPremisesImmutableId` para cada usuário nos dois tenants, usando o `ms-DS-ConsistencyGuid` como Source Anchor.
+- UPN, `mail` e `proxyAddresses` ajustados no caminho para o Tenant B, já que o domínio `.lab` não existe fora do laboratório.
+- As contas prontas para o Discovery e o mapeamento no Quest ODM.
+
+Ferramentas: Microsoft Entra ID, Microsoft Entra Connect Sync, Active Directory e DNS no Windows Server 2022, PowerShell (módulos `ActiveDirectory`, `ADSync` e `Microsoft.Graph`), VMware Workstation e, na próxima fase, Quest On Demand Migration.
 
 ---
 
-## 6. Objetivo técnico
-
-- Sincronizar a floresta `nexus.lab` para dois tenants ao mesmo tempo, cada um com seu próprio Entra Connect Sync.
-- Manter o `onPremisesImmutableId` igual para o mesmo usuário nos dois tenants, usando o `ms-DS-ConsistencyGuid` como Source Anchor.
-- Ajustar os atributos enviados ao Tenant B (UPN, `mail` e `proxyAddresses`), porque o domínio `.lab` não é roteável nem pode ser verificado.
-- Deixar as contas prontas para o Discovery e o mapeamento no Quest ODM.
-
----
-
-## 7. Arquitetura do laboratório
+## Arquitetura
 
 O ambiente roda no VMware Workstation, em uma rede NAT isolada (`192.168.150.0/24`), com 6 VMs Windows Server 2022.
 
@@ -170,11 +147,11 @@ flowchart TB
 
 ---
 
-## 8. Estratégia de identidade
+## Estratégia de identidade
 
-O `onPremisesImmutableId` de um usuário sincronizado é o valor do Source Anchor convertido para Base64. Se cada Entra Connect usasse um atributo diferente como anchor, o mesmo usuário ficaria com um ID em cada tenant.
+O `onPremisesImmutableId` de um usuário sincronizado é o Source Anchor convertido para Base64. Se cada Entra Connect usasse um atributo diferente como anchor, o mesmo usuário teria um ID em cada tenant.
 
-Para evitar isso, os dois servidores usam o `ms-DS-ConsistencyGuid` como Source Anchor, e a ordem de instalação foi pensada para aproveitar o valor gravado pelo primeiro:
+Por isso os dois servidores usam o `ms-DS-ConsistencyGuid`, e a ordem de instalação foi pensada para o segundo aproveitar o valor gravado pelo primeiro:
 
 ```mermaid
 sequenceDiagram
@@ -195,15 +172,15 @@ sequenceDiagram
 ```
 
 1. O Entra Connect de origem é instalado primeiro. Como o `ms-DS-ConsistencyGuid` está vazio, ele usa o `objectGUID` para gerar o `immutableId` e grava esse mesmo valor no `ms-DS-ConsistencyGuid` de cada usuário da Nexus. É a "tatuagem" no AD.
-2. O Entra Connect de destino é instalado depois e configurado manualmente para ler o `ms-DS-ConsistencyGuid`. Como o valor é o mesmo `objectGUID`, o `immutableId` no Tenant B fica igual ao do Tenant Origem.
+2. O Entra Connect de destino é instalado depois e configurado manualmente para ler o `ms-DS-ConsistencyGuid`. Como o valor é o mesmo, o `immutableId` no Tenant B fica igual ao do Tenant Origem.
 
 ---
 
-## 9. Pré-requisitos
+## Pré-requisitos
 
-### 9.1 Infraestrutura
+### Infraestrutura
 
-- 6 VMs Windows Server 2022, conforme a tabela da [seção 7](#7-arquitetura-do-laboratório), todas na mesma rede NAT.
+- 6 VMs Windows Server 2022, conforme a tabela da [Arquitetura](#arquitetura), na mesma rede NAT.
 - Servidores membros no domínio da própria floresta, com o DNS apontando para o DC local.
 - Resolução de nomes entre as florestas. O `SRV-ADC-Acme` precisa encontrar `nexus.lab`, então os dois DCs recebem encaminhadores condicionais:
 
@@ -217,7 +194,7 @@ Add-DnsServerConditionalForwarderZone -Name "acme.lab" -MasterServers 192.168.15
 
 - Snapshot das VMs antes de cada fase.
 
-### 9.2 Contas
+### Contas
 
 | Conta | Onde | Uso |
 |---|---|---|
@@ -226,24 +203,24 @@ Add-DnsServerConditionalForwarderZone -Name "acme.lab" -MasterServers 192.168.15
 | Enterprise Admin | `acme.lab` | Inclusão da floresta Acme |
 | Enterprise Admin | `nexus.lab` | Inclusão da floresta Nexus nos dois servidores |
 
-### 9.3 Software e configurações
+### Software e configurações
 
-- Microsoft Entra Connect Sync (`AzureADConnect.msi`), baixado pelo centro de administração do Microsoft Entra em *Entra Connect > Get started > Manage > Connect Sync*. Usar a versão mais recente.
+- Microsoft Entra Connect Sync (`AzureADConnect.msi`), baixado pelo centro de administração do Microsoft Entra em *Entra Connect > Get started > Manage > Connect Sync*, na versão mais recente.
 - TLS 1.2 habilitado nos servidores de sincronização.
 - IE Enhanced Security Configuration (IE ESC) desativado nos servidores `SRV-ADC-*`.
 - Horário sincronizado em todas as VMs (ver Fase 1).
-- Cerca de 10 usuários de teste por floresta, com UPNs que não se repetem entre as florestas.
+- Uns 10 usuários de teste por floresta, com UPNs que não se repetem entre as florestas.
 
 > [!IMPORTANT]
-> Este cenário usa o Entra Connect Sync. O Entra Cloud Sync foi descartado porque não permite escolher o Source Anchor nem editar regras de sincronização, e as duas coisas são necessárias aqui.
+> Usei o Entra Connect Sync, e não o Entra Cloud Sync, porque o Cloud Sync não deixa escolher o Source Anchor nem editar regras de sincronização. As duas coisas eram necessárias aqui.
 
 ---
 
-## 10. Passo a passo
+## Passo a passo
 
 ### Fase 1: Preparação
 
-**Objetivo:** eliminar as causas de falha mais comuns antes da instalação.
+**Objetivo:** tirar do caminho as causas de falha mais comuns antes de instalar.
 
 1. Desativar o IE ESC em *Server Manager > Local Server > IE Enhanced Security Configuration > Off* para administradores. Com ele ligado, o componente WAM (Web Account Manager) pode falhar ao abrir a tela de login.
 2. Ajustar fuso horário e NTP em todas as VMs:
@@ -279,20 +256,20 @@ w32tm /query /status
 3. **Connect to Azure AD:** Global Admin do Tenant Origem.
 4. **Connect your directories:**
    - Adicionar `acme.lab` com o Enterprise Admin da Acme.
-   - Adicionar `nexus.lab` com o Enterprise Admin da Nexus no formato UPN (`administrator@nexus.lab`).
+   - Adicionar `nexus.lab` com o Enterprise Admin da Nexus, no formato UPN (`administrator@nexus.lab`).
 5. **Domain/OU filtering:** todos os domínios e OUs.
 6. **Uniquely identifying your users:**
    - *Users are represented only once across all directories*.
    - Source Anchor: *Let Azure manage the source anchor for me*. Na primeira instalação, essa opção define o `ms-DS-ConsistencyGuid`.
 7. **Optional features:** nenhum writeback adicional.
 8. Deixar marcada a opção *Start the synchronization process when configuration completes* e concluir.
-9. Conferir no `DC02-Nexus` se o atributo foi gravado ([seção 11.1](#111-ms-ds-consistencyguid-gravado-no-ad)).
+9. Conferir no `DC02-Nexus` se o atributo foi gravado (ver [Validação](#ms-ds-consistencyguid-gravado-no-ad)).
 
 ---
 
 ### Fase 3: Problemas no servidor de origem
 
-Três problemas apareceram nesta fase. Os detalhes estão na [seção 12](#12-resolução-de-problemas).
+Três problemas apareceram aqui. Os detalhes estão em [Resolução de problemas](#resolução-de-problemas).
 
 | # | Sintoma | Causa | Ação |
 |---|---|---|---|
@@ -304,22 +281,24 @@ Três problemas apareceram nesta fase. Os detalhes estão na [seção 12](#12-re
 
 ### Fase 4: Servidor de destino (`SRV-ADC-Nexus`)
 
-**Objetivo:** sincronizar só `nexus.lab` para o Tenant B, reaproveitando o `ms-DS-ConsistencyGuid` que já está gravado.
+**Objetivo:** sincronizar só `nexus.lab` para o Tenant B, aproveitando o `ms-DS-ConsistencyGuid` que já está gravado.
 
 1. Instalação **Customize** com o Global Admin do Tenant B.
 2. **Connect your directories:** adicionar somente `nexus.lab`.
 3. **Uniquely identifying your users:** escolher *Choose a specific attribute* e informar `mS-DS-ConsistencyGuid`.
 
 > [!WARNING]
-> Neste servidor, não use *Let Azure manage the source anchor*. Quando o assistente encontra o `ms-DS-ConsistencyGuid` já preenchido, ele conclui que outra aplicação usa o atributo e volta para o `objectGUID`. O Tenant B receberia um `immutableId` diferente e o mapeamento quebraria. Depois de instalado, o Source Anchor não pode ser trocado livremente, e por isso a correção no laboratório foi desinstalar e instalar de novo.
+> Neste servidor, não use *Let Azure manage the source anchor*. Quando o assistente encontra o `ms-DS-ConsistencyGuid` já preenchido, ele entende que outra aplicação usa o atributo e volta para o `objectGUID`. O Tenant B receberia outro `immutableId` e o mapeamento quebraria. Como o Source Anchor não pode ser trocado livremente depois de instalado, a correção no laboratório foi desinstalar e instalar de novo.
 
-4. Na última tela, **desmarcar** *Start the synchronization process when configuration completes*. Assim nada é enviado ao Tenant B antes das regras customizadas existirem.
+4. Na última tela, **desmarcar** *Start the synchronization process when configuration completes*. Assim nada vai para o Tenant B antes das regras da próxima fase existirem.
 
 ---
 
 ### Fase 5: Regras de transformação customizadas
 
-**Objetivo:** adaptar os atributos ao Tenant B, onde o domínio `nexus.lab` não existe e não pode ser verificado.
+**Objetivo:** ajustar os atributos no caminho para o Tenant B, onde o domínio `nexus.lab` não existe.
+
+Sem essas regras, os usuários chegariam ao Tenant B com login e e-mail `@nexus.lab`, um domínio que não existe nem pode ser verificado lá. As regras mudam esses valores só para o Tenant B. O AD local e o Tenant Origem continuam iguais.
 
 No `SRV-ADC-Nexus`, abrir o Synchronization Rules Editor, escolher *Direction: Outbound* e clicar em **Add new rule**. As três regras usam a mesma base:
 
@@ -332,7 +311,7 @@ No `SRV-ADC-Nexus`, abrir o Synchronization Rules Editor, escolher *Direction: O
 | Scoping filter | vazio |
 | Join rules | vazio |
 
-As precedências ficam abaixo de 100 para que essas regras tenham prioridade sobre as regras padrão (*Out to AAD - User Join* e semelhantes). Cada regra precisa de um número diferente.
+Quando duas regras mandam valor para o mesmo atributo, vale a de número de precedência menor. As regras padrão da Microsoft (*Out to AAD - User Join* e parecidas) começam em 100, então usei 50, 51 e 52, um número diferente para cada regra.
 
 #### Regra 1: UPN (precedência 50)
 
@@ -340,7 +319,7 @@ As precedências ficam abaixo de 100 para que essas regras tenham prioridade sob
 |---|---|---|---|---|
 | Expression | `userPrincipalName` | `Left([userPrincipalName], InStr([userPrincipalName], "@")) & "<tenantb>.onmicrosoft.com"` | Não | Update |
 
-Exemplo: `joao.silva@nexus.lab` vira `joao.silva@<tenantb>.onmicrosoft.com`. O `InStr` devolve a posição do `@`, e o `Left` guarda tudo até ele, incluindo o próprio `@`.
+Exemplo: `joao.silva@nexus.lab` vira `joao.silva@<tenantb>.onmicrosoft.com`. O `InStr` devolve a posição do `@`, e o `Left` guarda tudo até ele, com o `@` incluído.
 
 #### Regra 2: Mail (precedência 51)
 
@@ -355,9 +334,9 @@ Exemplo: `joao.silva@nexus.lab` vira `joao.silva@<tenantb>.onmicrosoft.com`. O `
 | Expression | `proxyAddresses` | `AuthoritativeNull` | Update |
 
 > [!IMPORTANT]
-> Para deixar um atributo vazio no Entra Connect, use a constante `AuthoritativeNull`. Um `NULL` comum significa "esta regra não envia nada", e aí a regra padrão, de precedência mais baixa, manda o valor original. Com o atributo vazio, o Tenant B cria o endereço `@<tenantb>.onmicrosoft.com` e não dá erro de domínio não verificado.
+> Para deixar um atributo vazio no Entra Connect, use `AuthoritativeNull`. Um `NULL` comum quer dizer "esta regra não envia nada", e aí a regra padrão manda o valor original.
 >
-> Na primeira versão do laboratório eu usei `NULL` nas regras 2 e 3, e o problema só apareceu quando testei com um usuário que tinha e-mail. Veja o [problema 6](#problema-6-as-regras-com-null-não-removiam-o-e-mail).
+> Na primeira versão do laboratório eu usei `NULL` nas regras 2 e 3, e só percebi o erro quando testei com um usuário que tinha e-mail. Está no [problema 5](#problema-5-as-regras-com-null-não-removiam-o-e-mail).
 
 ---
 
@@ -373,13 +352,15 @@ Get-ADSyncScheduler
 ```
 
 1. No Synchronization Service Manager, aba *Operations*, conferir o status *success* em *Full Import*, *Full Synchronization* e *Export*.
-2. Rodar as conferências da [seção 11](#11-validação).
+2. Rodar as conferências da [Validação](#validação).
+
+Usei `Initial` e não `Delta` porque mudanças em regras precisam ser aplicadas a todos os objetos. O `Delta` só reprocessa o que mudou no AD.
 
 ---
 
-## 11. Validação
+## Validação
 
-### 11.1 `ms-DS-ConsistencyGuid` gravado no AD
+### `ms-DS-ConsistencyGuid` gravado no AD
 
 ```powershell
 # No DC02-Nexus: mostra o GUID já convertido para o formato do immutableId
@@ -390,7 +371,7 @@ Get-ADUser -Filter * -Properties 'mS-DS-ConsistencyGuid' |
 
 Se a coluna `ImmutableId` vier vazia para algum usuário, o atributo não foi gravado (ver [problema 3](#problema-3-o-ms-ds-consistencyguid-não-é-gravado-no-ad)).
 
-### 11.2 Source Anchor de cada servidor
+### Source Anchor de cada servidor
 
 ```powershell
 # Em cada SRV-ADC-*
@@ -401,7 +382,7 @@ Se a coluna `ImmutableId` vier vazia para algum usuário, o atributo não foi gr
 
 Nos dois servidores o resultado precisa ser `mS-DS-ConsistencyGuid`.
 
-### 11.3 `onPremisesImmutableId` igual nos dois tenants
+### `onPremisesImmutableId` igual nos dois tenants
 
 ```powershell
 # Rodar uma vez em cada tenant, trocando o TenantId e o nome do arquivo
@@ -421,29 +402,30 @@ Compare-Object $origem $destino -Property onPremisesImmutableId -IncludeEqual |
 
 | Indicador | O que significa |
 |---|---|
-| `==` | Usuário da Nexus presente nos dois tenants com o mesmo ID (esperado) |
+| `==` | Usuário da Nexus nos dois tenants com o mesmo ID (esperado) |
 | `<=` | Usuário da Acme, que só existe no Tenant Origem (esperado) |
-| `=>` | Usuário que só existe no Tenant B (precisa ser investigado) |
+| `=>` | Usuário que só existe no Tenant B (precisa investigar) |
 
-### 11.4 Checklist final
+### Checklist final
 
 - [x] O Tenant Origem tem usuários das florestas Acme e Nexus.
-- [x] O Tenant B tem somente usuários da Nexus.
+- [x] O Tenant B tem somente usuários da Nexus (10 usuários e 2 grupos no conector).
 - [x] Os UPNs no Tenant B terminam em `@<tenantb>.onmicrosoft.com`.
 - [x] Cada usuário da Nexus tem o mesmo `onPremisesImmutableId` nos dois tenants.
+- [x] `mail` e `proxyAddresses` com `@nexus.lab` não chegam ao Tenant B.
 - [x] A sincronização terminou com status *success* no Synchronization Service Manager.
 
 ---
 
-## 12. Resolução de problemas
+## Resolução de problemas
 
-Cada problema segue a mesma ordem: sintoma, causa, solução e prevenção.
+Cada problema está na mesma ordem: sintoma, causa, solução e prevenção.
 
 ### Problema 1: erro WAM `3400007680` (NoInternet) no assistente
 
 | | |
 |---|---|
-| **Sintoma** | A tela de login do Entra ID falha na primeira tentativa com o código `3400007680` (NoInternet), mesmo com a internet funcionando. |
+| **Sintoma** | O login do Entra ID falha na primeira tentativa com o código `3400007680` (NoInternet), mesmo com a internet funcionando. |
 | **Causa** | Falha no fluxo de autenticação do WAM (Web Account Manager), ligada ao TLS 1.2 e ao cache do WAM. O IE ESC ligado piora a situação. |
 | **Solução** | Fechar o assistente e abrir de novo forçando o login interativo: |
 
@@ -473,7 +455,7 @@ Resolve-DnsName -Type SRV _ldap._tcp.dc._msdcs.nexus.lab
 Test-NetConnection 192.168.150.20 -Port 389
 ```
 
-Se a resolução falhar, confira os encaminhadores condicionais da [seção 9.1](#91-infraestrutura).
+Se a resolução falhar, confira os encaminhadores condicionais em [Infraestrutura](#infraestrutura).
 
 ---
 
@@ -481,7 +463,7 @@ Se a resolução falhar, confira os encaminhadores condicionais da [seção 9.1]
 
 | | |
 |---|---|
-| **Sintoma** | A sincronização roda, mas o atributo continua vazio nos usuários da Nexus. Sem ele, a estratégia de match entre os tenants não funciona. |
+| **Sintoma** | A sincronização roda, mas o atributo continua vazio nos usuários da Nexus. Sem ele, o match entre os tenants não funciona. |
 | **Causa** | Fuso horário errado nas VMs. A diferença real entre os relógios passava dos 5 minutos que o Kerberos tolera, a autenticação falhava e o Entra Connect não conseguia gravar no AD. |
 | **Solução** | Corrigir o fuso, forçar o NTP (Fase 1) e rodar um novo ciclo de sincronização. |
 
@@ -498,7 +480,7 @@ klist purge
 Start-ADSyncSyncCycle -PolicyType Delta
 ```
 
-Depois, conferir com o script da [seção 11.1](#111-ms-ds-consistencyguid-gravado-no-ad).
+Depois, conferir com o script de [Validação](#ms-ds-consistencyguid-gravado-no-ad).
 
 ---
 
@@ -508,34 +490,22 @@ Depois, conferir com o script da [seção 11.1](#111-ms-ds-consistencyguid-grava
 |---|---|
 | **Sintoma** | No `SRV-ADC-Nexus`, a opção *Let Azure manage the source anchor* resultou em `objectGUID`. |
 | **Causa** | O assistente encontrou o `ms-DS-ConsistencyGuid` preenchido pelo servidor de origem e voltou para o `objectGUID` por precaução. |
-| **Impacto** | O Tenant B receberia outro `immutableId` e o mapeamento no ODM ficaria inconsistente. |
+| **Impacto** | O Tenant B receberia outro `immutableId` e o mapeamento no ODM não bateria. |
 | **Solução** | Desinstalar o Entra Connect, instalar de novo e escolher *Choose a specific attribute* com `mS-DS-ConsistencyGuid`. |
 
-**Prevenção:** no segundo servidor, escolher o atributo manualmente e manter a sincronização desligada até conferir o anchor com o comando da [seção 11.2](#112-source-anchor-de-cada-servidor).
+**Prevenção:** no segundo servidor, escolher o atributo manualmente e manter a sincronização desligada até conferir o anchor com o comando de [Validação](#source-anchor-de-cada-servidor).
 
 ---
 
-### Problema 5: erros de UPN, `mail` ou `proxyAddresses` no Tenant B
+### Problema 5: as regras com `NULL` não removiam o e-mail
 
 | | |
 |---|---|
-| **Sintoma** | Objetos exportados com o sufixo `nexus.lab` ou erros de domínio não verificado no Tenant B. |
-| **Causa** | O domínio `.lab` não é roteável e não pode ser verificado no Tenant B. |
-| **Solução** | Regras outbound da Fase 5 (UPN reescrito, `mail` e `proxyAddresses` com `AuthoritativeNull`) e depois `Start-ADSyncSyncCycle -PolicyType Initial`. |
+| **Sintoma** | As regras de `mail` e `proxyAddresses` estavam criadas e o Export terminava com *success*, mas o e-mail `@nexus.lab` continuava indo para o Tenant B. Ninguém percebia porque os usuários de teste não tinham e-mail no AD. |
+| **Causa** | No Entra Connect, uma regra que devolve `NULL` é tratada como "não contribui", então a regra padrão continuava mandando o valor original. E o Entra ID aceita esse valor sem erro, por isso o Export verde não provava nada. |
+| **Solução** | Editar as regras 2 e 3, trocar o Source de `NULL` para `AuthoritativeNull` e rodar `Start-ADSyncSyncCycle -PolicyType Initial`. |
 
-**Dica:** o botão Preview (Synchronization Service Manager > Metaverse Search > objeto > *Connectors* > *Properties* > *Preview*) mostra o valor final de cada atributo antes da exportação.
-
----
-
-### Problema 6: as regras com `NULL` não removiam o e-mail
-
-| | |
-|---|---|
-| **Sintoma** | As regras de `mail` e `proxyAddresses` estavam criadas e o Export terminava com *success*, mas o e-mail `@nexus.lab` continuava indo para o Tenant B. O problema ficou escondido porque os usuários de teste não tinham e-mail no AD. |
-| **Causa** | No Entra Connect, uma regra que devolve `NULL` é tratada como "não contribui". A regra padrão, de precedência maior, continuava enviando o valor original. Além disso, o Entra ID aceita esse valor sem erro, então o Export verde não provava nada. |
-| **Solução** | Editar as regras 2 e 3 e trocar o Source de `NULL` para `AuthoritativeNull`, depois rodar `Start-ADSyncSyncCycle -PolicyType Initial`. |
-
-**Como reproduzi e validei:**
+**Como reproduzi:**
 
 ```powershell
 # No DC02-Nexus: dar um e-mail a um usuário de teste
@@ -545,82 +515,86 @@ Set-ADUser teste.nexus8 -EmailAddress 'teste.nexus8@nexus.lab' -Add @{ proxyAddr
 Start-ADSyncSyncCycle -PolicyType Delta
 ```
 
-Depois, em Synchronization Service Manager > Connectors > conector do Tenant B > *Search Connector Space*, abri o objeto do usuário:
+Depois abri o objeto do usuário em Synchronization Service Manager > Connectors > conector do Tenant B > *Search Connector Space*:
 
 | Com `NULL` | Com `AuthoritativeNull` |
 |---|---|
 | `mail` aparece como **add** com `teste.nexus8@nexus.lab` | `mail` e `proxyAddresses` aparecem como **delete** |
 | ![Regra com NULL: mail adicionado](docs/img/06a-mail-antes.png) | ![Regra com AuthoritativeNull: mail removido](docs/img/06b-mail-depois.png) |
 
-**Prevenção:** testar regras de transformação com um objeto que tenha o atributo preenchido e conferir o connector space, sem confiar só no status do Export.
+**Prevenção:** testar regras de transformação com um objeto que tenha o atributo preenchido e olhar o connector space, em vez de confiar no status do Export.
+
+> [!TIP]
+> Para abrir uma regra em modo de edição, selecione a regra e clique em **Edit**. O duplo clique abre a regra só para visualização, e o botão Save fica desativado.
 
 ---
 
-## 13. Lições aprendidas
+## Lições aprendidas
 
 1. **A ordem de instalação faz parte da arquitetura.** O primeiro Entra Connect grava o atributo no AD e o segundo só lê. Se a ordem muda, ou se o segundo servidor escolhe o anchor sozinho, o match se perde.
 2. **No segundo servidor, o padrão do assistente não serve.** A troca para `objectGUID` acontece sem aviso e só aparece na conferência.
 3. **Horário também é infraestrutura.** Um fuso errado parece detalhe, mas derruba o Kerberos e, junto, a gravação no AD. Fuso e NTP agora entram no meu checklist antes de qualquer instalação.
-4. **Em ambiente com várias florestas, começo por DNS e formato de credencial.** Encaminhadores condicionais e usuário no formato UPN evitam o erro enganoso de floresta inexistente.
-5. **A sincronização só é liberada depois das regras.** Desmarcar a opção de iniciar a sincronização evita mandar atributos inválidos para o tenant e ter que corrigir depois.
-6. **`AuthoritativeNull` e `NULL` não são a mesma coisa.** Para apagar um atributo, a regra de maior prioridade precisa usar `AuthoritativeNull`. Aprendi isso na prática: com `NULL`, o e-mail continuava indo para o tenant e nada indicava erro.
-9. **Export com *success* não quer dizer que a regra funcionou.** A prova está no connector space, testando com um objeto que tenha o atributo preenchido.
-7. **Entra Connect Sync em vez de Cloud Sync** quando o cenário exige escolher o Source Anchor e criar regras próprias.
-8. **Conferir com script.** Comparar o `immutableId` dos dois tenants por PowerShell me deu muito mais segurança do que olhar alguns usuários no portal.
+4. **Com várias florestas, começo por DNS e formato de credencial.** Encaminhadores condicionais e usuário no formato UPN evitam o erro de floresta inexistente.
+5. **A sincronização só é liberada depois das regras.** Desmarcar a opção de iniciar a sincronização evita mandar atributos errados para o tenant e ter que corrigir depois.
+6. **`NULL` e `AuthoritativeNull` não são a mesma coisa.** Para apagar um atributo, a regra de maior prioridade precisa usar `AuthoritativeNull`. Aprendi isso testando: com `NULL`, o e-mail continuava indo para o tenant e nada indicava erro.
+7. **Export com *success* não quer dizer que a regra funcionou.** A prova está no connector space, com um objeto que tenha o atributo preenchido.
+8. **Entra Connect Sync em vez de Cloud Sync** quando o cenário exige escolher o Source Anchor e criar regras próprias.
+9. **Conferir com script.** Comparar o `immutableId` dos dois tenants por PowerShell me deu mais segurança do que olhar alguns usuários no portal.
 
 ---
 
-## 14. O que eu faria diferente em um projeto real
+## O que eu faria diferente em um projeto real
 
-O laboratório tem simplificações que não caberiam em produção. Anotar essas diferenças também fez parte do estudo.
+O laboratório tem simplificações que não caberiam em produção:
 
 | No laboratório | Em um projeto real |
 |---|---|
 | Domínio `.lab`, com UPN reescrito e e-mail apagado | Domínios públicos verificados nos tenants e um plano de troca de domínio |
-| Reinstalação do Entra Connect para corrigir o Source Anchor | Decisão do Source Anchor documentada e aprovada antes da instalação, com checklist para cada tela do assistente |
+| Reinstalação do Entra Connect para corrigir o Source Anchor | Source Anchor decidido e documentado antes da instalação, com checklist para cada tela do assistente |
 | Conferência feita depois da primeira sincronização | Servidor em Staging Mode para conferir o resultado antes de exportar qualquer coisa |
-| Global Admin e Enterprise Admin para tudo | Contas de serviço com o mínimo de permissão necessário |
+| Regras testadas com usuários sem e-mail | Regras testadas com objetos que tenham todos os atributos que a regra altera |
+| Global Admin e Enterprise Admin para tudo | Contas de serviço só com as permissões necessárias |
+| Bloqueio de tela desativado nas VMs | Bloqueio de tela e tempo de inatividade mantidos, porque são controles de segurança |
 | Usuários de teste | Comunicação com os usuários, janela de manutenção e plano de rollback |
-| Scripts rodados à mão | Scripts versionados e relatório gerado a cada ciclo |
 
 ---
 
-## 15. Evidências
+## Evidências
 
-Capturas de tela do laboratório, com os nomes dos tenants ocultos.
+Capturas de tela do laboratório, com o nome dos tenants escondido.
 
-### 15.1 O `ms-DS-ConsistencyGuid` gravado no AD
+### O `ms-DS-ConsistencyGuid` gravado no AD
 
-Attribute Editor do usuário Teste Nexus 8 no `DC02-Nexus`, com o atributo preenchido pelo Entra Connect de origem.
+Attribute Editor do usuário Teste Nexus 8 no `DC02-Nexus`, com o atributo preenchido pelo Entra Connect de origem:
 
 ![Attribute Editor com mS-DS-ConsistencyGuid](docs/img/01-attribute-editor.png)
 
-### 15.2 O mesmo valor no AD e no Tenant B
+### O mesmo valor no AD e no Tenant B
 
 No AD, o `ms-DS-ConsistencyGuid` convertido para Base64 dá `ELKIWlsVPEutQV96hh8idw==`:
 
 ![ImmutableId calculado no AD](docs/img/02-immutableid-ad.png)
 
-No connector space do Tenant B, o `sourceAnchor` enviado pelo `SRV-ADC-Nexus` é o mesmo valor, e o UPN já está reescrito pela regra 1:
+No connector space do Tenant B, o `sourceAnchor` enviado pelo `SRV-ADC-Nexus` é o mesmo valor, e o UPN já aparece reescrito pela regra 1:
 
 ![Connector space do Tenant B](docs/img/03-connector-space-tenantb.png)
 
-Um detalhe curioso: o nome do objeto no conector, `CN={454C4B4957...}`, é o próprio `sourceAnchor` escrito em hexadecimal (`45` = E, `4C` = L, `4B` = K, `49` = I, `57` = W...).
+Reparei também que o nome do objeto no conector, `CN={454C4B4957...}`, é o próprio `sourceAnchor` em hexadecimal: `45` = E, `4C` = L, `4B` = K, `49` = I, `57` = W, e assim por diante.
 
-### 15.3 Correção das regras de e-mail
+### Correção das regras de e-mail
 
-Os prints de antes e depois estão no [problema 6](#problema-6-as-regras-com-null-não-removiam-o-e-mail).
+Os prints de antes e depois estão no [problema 5](#problema-5-as-regras-com-null-não-removiam-o-e-mail).
 
 ---
 
-## 16. Status e próximos passos
+## Status e próximos passos
 
 | Etapa | Status |
 |---|---|
 | Infraestrutura (6 VMs, 2 florestas, DNS e NTP) | Concluída |
 | Entra Connect Sync de origem (Acme e Nexus para o Tenant Origem) | Concluída |
 | Entra Connect Sync de destino (Nexus para o Tenant B) | Concluída |
-| Regras de transformação customizadas | Concluída |
+| Regras de transformação | Concluída |
 | Conferência do `immutableId` entre os tenants | Concluída |
 | Instalação dos agentes do Quest ODM | Próxima etapa |
 | Discovery e mapeamento de usuários e grupos no ODM | Planejada |
@@ -636,7 +610,7 @@ Próximas ações:
 
 ---
 
-## 17. Referências
+## Referências
 
 - [Microsoft Entra Connect: design concepts (sourceAnchor e ms-DS-ConsistencyGuid)](https://learn.microsoft.com/en-us/entra/identity/hybrid/connect/plan-connect-design-concepts)
 - [Microsoft Entra Connect Sync: alterações na configuração padrão](https://learn.microsoft.com/en-us/entra/identity/hybrid/connect/how-to-connect-sync-change-the-configuration)
