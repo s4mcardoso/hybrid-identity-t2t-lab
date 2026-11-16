@@ -602,11 +602,11 @@ Próximas ações:
 
 ## Autor
 
-**[Seu Nome]**
-Profissional de TI na área de migrações Microsoft 365 tenant-to-tenant. Estudante de [curso / instituição].
+**Samuel Cardoso de Oliveira**
+Profissional de TI na área de migrações Microsoft 365 tenant-to-tenant. Estudante de Análise e Desenvolvimento de Sistemas | Facens - Faculdade de Engenharia de Sorocaba.
 
-[LinkedIn](https://www.linkedin.com/in/SEU-PERFIL) · [GitHub](https://github.com/SEU-USUARIO)
+[LinkedIn](www.linkedin.com/in/samcardosoti) · [GitHub](https://github.com/s4mcardoso)
 
-Interesses: identidade híbrida, Microsoft Entra ID, Active Directory, migrações Microsoft 365 e automação com PowerShell.
+Interesses: Microsoft Azure, identidade híbrida, Microsoft Entra ID, Active Directory, migrações Microsoft 365 e automação com PowerShell.
 
 > **Aviso:** este repositório documenta um **laboratório fictício, feito apenas para estudo**. Empresas, domínios, usuários e cenário são inventados e não correspondem a nenhuma organização ou projeto real. O projeto não tem vínculo com a Microsoft nem com a Quest Software. Teste qualquer procedimento em ambiente controlado antes de usar em produção.
