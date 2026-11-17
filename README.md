@@ -20,7 +20,7 @@ Projeto de estudo pessoal. Montei do zero um ambiente com duas florestas Active 
 |---|---|
 | **O que montei** | 6 servidores Windows Server 2022, 2 florestas Active Directory e 2 tenants Microsoft 365, simulando a separação de uma empresa de um grupo. |
 | **O problema** | Sincronizar a mesma floresta para dois tenants ao mesmo tempo, com o mesmo identificador para cada usuário nos dois lados. Sem isso, a migração gera contas duplicadas. |
-| **Resultado** | Identidades com o mesmo `immutableId` nos dois tenants, conferido por script, regras de sincronização próprias e cinco problemas resolvidos e documentados. |
+| **Resultado** | Os 10 usuários da Nexus com o mesmo `immutableId` nos dois tenants, conferido por script, regras de sincronização próprias e seis problemas resolvidos e documentados. |
 
 ---
 
@@ -82,6 +82,7 @@ Os detalhes de cada um estão em [Resolução de problemas](#resolução-de-prob
 | O segundo Entra Connect escolheu sozinho o identificador errado | Percebi antes de liberar a sincronização | Reinstalei com o atributo certo, e nenhum ID diferente chegou ao Tenant B |
 | As regras de e-mail pareciam funcionar porque o Export ficava verde, mas o `@nexus.lab` continuava indo para o Tenant B | Coloquei um e-mail em um usuário de teste e conferi o objeto no connector space antes e depois | Troquei `NULL` por `AuthoritativeNull` e vi os atributos saírem como `delete` |
 | Erro WAM no login do assistente e erro de floresta "inexistente" | Separei as causas: fluxo do WAM em um caso, senha e formato do usuário no outro | Instalação concluída |
+| Na validação final, o `Connect-MgGraph` não funcionava no servidor | Separei três causas: módulo fora do caminho de módulos, falha no login por device code e teclado ABNT2 trocando símbolos ao colar comandos na VM | Comparação feita por script, com 10 de 10 IDs iguais |
 
 ---
 
@@ -384,9 +385,15 @@ Nos dois servidores o resultado precisa ser `mS-DS-ConsistencyGuid`.
 
 ### `onPremisesImmutableId` igual nos dois tenants
 
+Rodei essa conferência no `SRV-ADC-Nexus`, mas qualquer máquina com internet serve. Ela não usa o AD nem o Entra Connect, só consulta os dois tenants pelo Microsoft Graph. As duas exportações precisam ficar na mesma pasta para a comparação no final.
+
 ```powershell
+# Só os módulos que o script usa (o pacote Microsoft.Graph completo é bem maior)
+Install-Module Microsoft.Graph.Authentication, Microsoft.Graph.Users -Scope CurrentUser -Force
+
 # Rodar uma vez em cada tenant, trocando o TenantId e o nome do arquivo
 Connect-MgGraph -TenantId "<tenant>.onmicrosoft.com" -Scopes "User.Read.All"
+Get-MgContext | Select-Object Account, TenantId   # confere se entrou no tenant certo
 Get-MgUser -All -Property displayName, userPrincipalName, onPremisesImmutableId |
     Where-Object onPremisesImmutableId |
     Select-Object displayName, userPrincipalName, onPremisesImmutableId |
@@ -400,18 +407,38 @@ Compare-Object $origem $destino -Property onPremisesImmutableId -IncludeEqual |
     Group-Object SideIndicator | Select-Object Name, Count
 ```
 
-| Indicador | O que significa |
-|---|---|
-| `==` | Usuário da Nexus nos dois tenants com o mesmo ID (esperado) |
-| `<=` | Usuário da Acme, que só existe no Tenant Origem (esperado) |
-| `=>` | Usuário que só existe no Tenant B (precisa investigar) |
+| Indicador | O que significa | Resultado no laboratório |
+|---|---|---|
+| `==` | Usuário da Nexus nos dois tenants com o mesmo ID (esperado) | 10 |
+| `<=` | Usuário da Acme, que só existe no Tenant Origem (esperado) | 10 |
+| `=>` | Usuário que só existe no Tenant B (precisa investigar) | 0 |
+
+Para ver usuário por usuário, montei uma tabela com os dois tenants lado a lado:
+
+```powershell
+$b = Import-Csv .\tenant-b.csv
+Import-Csv .\tenant-origem.csv | Where-Object DisplayName -like 'Teste Nexus*' | ForEach-Object {
+    $o = $_
+    $d = $b | Where-Object DisplayName -eq $o.DisplayName
+    [pscustomobject]@{
+        Usuario            = $o.DisplayName
+        'ID Tenant Origem' = $o.OnPremisesImmutableId
+        'ID Tenant B'      = $d.OnPremisesImmutableId
+        Igual              = ($o.OnPremisesImmutableId -ceq $d.OnPremisesImmutableId)
+    }
+} | Format-Table -AutoSize
+```
+
+Usei `-ceq` porque o Base64 diferencia maiúsculas de minúsculas. Os 10 usuários vieram com `True` (ver [Evidências](#os-dois-tenants-lado-a-lado)).
+
+Se o `Connect-MgGraph` não for reconhecido ou der erro no login, ver o [problema 6](#problema-6-o-connect-mggraph-não-funcionava-no-servidor).
 
 ### Checklist final
 
-- [x] O Tenant Origem tem usuários das florestas Acme e Nexus.
+- [x] O Tenant Origem tem usuários das florestas Acme e Nexus (10 de cada).
 - [x] O Tenant B tem somente usuários da Nexus (10 usuários e 2 grupos no conector).
 - [x] Os UPNs no Tenant B terminam em `@<tenantb>.onmicrosoft.com`.
-- [x] Cada usuário da Nexus tem o mesmo `onPremisesImmutableId` nos dois tenants.
+- [x] Cada usuário da Nexus tem o mesmo `onPremisesImmutableId` nos dois tenants (10 de 10).
 - [x] `mail` e `proxyAddresses` com `@nexus.lab` não chegam ao Tenant B.
 - [x] A sincronização terminou com status *success* no Synchronization Service Manager.
 
@@ -529,6 +556,47 @@ Depois abri o objeto do usuário em Synchronization Service Manager > Connectors
 
 ---
 
+### Problema 6: o `Connect-MgGraph` não funcionava no servidor
+
+Na validação final apareceram três problemas seguidos, todos no `SRV-ADC-Nexus`. Nenhum tinha a ver com os tenants nem com a sincronização.
+
+**6.1. Comando não reconhecido mesmo depois de instalar o módulo**
+
+| | |
+|---|---|
+| **Sintoma** | `Connect-MgGraph : The term 'Connect-MgGraph' is not recognized`. O `Install-Module` terminava com *installed successfully*, mas o `Get-Module -ListAvailable` voltava vazio, inclusive em uma janela nova. |
+| **Causa** | Na primeira tentativa, o `Install-Module` parou para instalar o provedor NuGet e não chegou a instalar os módulos. Na segunda, eles foram instalados em `Documents\WindowsPowerShell\Modules`, mas o PowerShell desse servidor não procurava módulos nessa pasta. Não confirmei o motivo. |
+| **Solução** | Importar os módulos pelo caminho completo: |
+
+```powershell
+$mods = "C:\Users\Administrator\Documents\WindowsPowerShell\Modules"
+Import-Module "$mods\Microsoft.Graph.Authentication\2.41.2\Microsoft.Graph.Authentication.psd1"
+Import-Module "$mods\Microsoft.Graph.Users\2.41.2\Microsoft.Graph.Users.psd1"
+Get-Command Connect-MgGraph, Get-MgUser
+```
+
+Toda janela nova do PowerShell precisa desse `Import-Module`, a não ser que a pasta seja incluída no `PSModulePath`.
+
+**6.2. Erro no login por device code**
+
+| | |
+|---|---|
+| **Sintoma** | Com `-UseDeviceCode`, o comando mostrava dois códigos seguidos e falhava com `An error occurred when writing to a listener` (`EventSourceException`) antes do login terminar. |
+| **Causa** | Erro interno do módulo, não do tenant nem da credencial. Não confirmei a causa exata. |
+| **Solução** | Conectar sem o `-UseDeviceCode`. O login pela janela do WAM funcionou nos dois tenants. |
+
+**6.3. Símbolos trocados ao colar comandos no console da VM**
+
+| | |
+|---|---|
+| **Sintoma** | Comandos colados chegavam com `}` no lugar de `|`, `]` no lugar de `\` e `^` no lugar de aspas, e o PowerShell devolvia `Unexpected token '}'`. |
+| **Causa** | O teclado da VM estava em português (ABNT2). Ao colar, o VMware "digita" as teclas, e no layout ABNT2 os símbolos caem em teclas diferentes. As letras passam certo. |
+| **Solução** | Trocar o teclado da VM para inglês (EUA) e testar antes com `"teste | barra \ aspas"`. |
+
+**Prevenção:** antes de rodar scripts colados no console da VM, conferir o layout do teclado. Colar só o comando, nunca a saída da tela junto.
+
+---
+
 ## Lições aprendidas
 
 1. **A ordem de instalação faz parte da arquitetura.** O primeiro Entra Connect grava o atributo no AD e o segundo só lê. Se a ordem muda, ou se o segundo servidor escolhe o anchor sozinho, o match se perde.
@@ -540,6 +608,7 @@ Depois abri o objeto do usuário em Synchronization Service Manager > Connectors
 7. **Export com *success* não quer dizer que a regra funcionou.** A prova está no connector space, com um objeto que tenha o atributo preenchido.
 8. **Entra Connect Sync em vez de Cloud Sync** quando o cenário exige escolher o Source Anchor e criar regras próprias.
 9. **Conferir com script.** Comparar o `immutableId` dos dois tenants por PowerShell me deu mais segurança do que olhar alguns usuários no portal.
+10. **Base64 diferencia maiúsculas de minúsculas.** Ao copiar um ID de um print, eu tinha trocado um `I` maiúsculo por um `l` minúsculo. No olho parece igual, mas é outro valor. Por isso a comparação final usa `-ceq`.
 
 ---
 
@@ -571,7 +640,7 @@ Attribute Editor do usuário Teste Nexus 8 no `DC02-Nexus`, com o atributo preen
 
 ### O mesmo valor no AD e no Tenant B
 
-No AD, o `ms-DS-ConsistencyGuid` convertido para Base64 dá `ELKIWlsVPEutQV96hh8idw==`:
+No AD, o `ms-DS-ConsistencyGuid` convertido para Base64 dá `ELKIWIsVPEutQV96hh8idw==`:
 
 ![ImmutableId calculado no AD](docs/img/02-immutableid-ad.png)
 
@@ -580,6 +649,16 @@ No connector space do Tenant B, o `sourceAnchor` enviado pelo `SRV-ADC-Nexus` é
 ![Connector space do Tenant B](docs/img/03-connector-space-tenantb.png)
 
 Reparei também que o nome do objeto no conector, `CN={454C4B4957...}`, é o próprio `sourceAnchor` em hexadecimal: `45` = E, `4C` = L, `4B` = K, `49` = I, `57` = W, e assim por diante.
+
+### Os dois tenants lado a lado
+
+Os 10 usuários da Nexus, com o `onPremisesImmutableId` lido de cada tenant pelo Microsoft Graph. Todos vieram com `True`:
+
+![immutableId dos dois tenants lado a lado](docs/img/07-immutableid-lado-a-lado.png)
+
+Resumo da comparação: 10 IDs iguais (`==`), 10 usuários da Acme só no Tenant Origem (`<=`) e nenhum usuário sobrando no Tenant B:
+
+![Resultado do Compare-Object](docs/img/08-compare-object.png)
 
 ### Correção das regras de e-mail
 
@@ -595,7 +674,7 @@ Os prints de antes e depois estão no [problema 5](#problema-5-as-regras-com-nul
 | Entra Connect Sync de origem (Acme e Nexus para o Tenant Origem) | Concluída |
 | Entra Connect Sync de destino (Nexus para o Tenant B) | Concluída |
 | Regras de transformação | Concluída |
-| Conferência do `immutableId` entre os tenants | Concluída |
+| Conferência do `immutableId` entre os tenants | Concluída (10 de 10) |
 | Instalação dos agentes do Quest ODM | Próxima etapa |
 | Discovery e mapeamento de usuários e grupos no ODM | Planejada |
 | Migração de dados por módulo (e-mail, OneDrive, Teams) | Planejada |
@@ -605,6 +684,7 @@ Próximas ações:
 - [ ] Instalar os agentes do Quest ODM no `SRV-ODMAD-Acme` e no `SRV-ODMAD-Nexus`, conferindo os requisitos na documentação da Quest.
 - [ ] Conectar o Tenant Origem e o Tenant B no ODM.
 - [ ] Rodar o Discovery de contas e grupos.
+- [ ] Definir como o ODM vai casar as contas. O mesmo usuário tem UPN diferente em cada tenant (só a parte antes do `@` é igual), então o match não pode ser pelo UPN completo.
 - [ ] Mapear usuários e grupos entre origem e destino e conferir o resultado.
 - [ ] Migrar os dados módulo por módulo e registrar os resultados aqui.
 
@@ -615,6 +695,7 @@ Próximas ações:
 - [Microsoft Entra Connect: design concepts (sourceAnchor e ms-DS-ConsistencyGuid)](https://learn.microsoft.com/en-us/entra/identity/hybrid/connect/plan-connect-design-concepts)
 - [Microsoft Entra Connect Sync: alterações na configuração padrão](https://learn.microsoft.com/en-us/entra/identity/hybrid/connect/how-to-connect-sync-change-the-configuration)
 - [Microsoft Entra Connect Sync: agendador (scheduler)](https://learn.microsoft.com/en-us/entra/identity/hybrid/connect/how-to-connect-sync-feature-scheduler)
+- [Microsoft Graph PowerShell SDK: instalação](https://learn.microsoft.com/en-us/powershell/microsoftgraph/installation)
 - [Quest On Demand Migration: documentação técnica](https://support.quest.com/on-demand-migration)
 
 ---
