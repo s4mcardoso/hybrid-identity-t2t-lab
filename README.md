@@ -20,7 +20,7 @@ Projeto de estudo pessoal. Montei do zero um ambiente com duas florestas Active 
 |---|---|
 | **O que montei** | 6 servidores Windows Server 2022, 2 florestas Active Directory e 2 tenants Microsoft 365, simulando a separação de uma empresa de um grupo. |
 | **O problema** | Sincronizar a mesma floresta para dois tenants ao mesmo tempo, com o mesmo identificador para cada usuário nos dois lados. Sem isso, a migração gera contas duplicadas. |
-| **Resultado** | Os 10 usuários da Nexus com o mesmo `immutableId` nos dois tenants, conferido por script, regras de sincronização próprias e seis problemas resolvidos e documentados. |
+| **Resultado** | Os 10 usuários da Nexus com o mesmo `immutableId` nos dois tenants, conferido por script, regras de sincronização próprias e sete problemas resolvidos e documentados. |
 
 ---
 
@@ -68,7 +68,7 @@ O que eu queria aprender:
 | Kerberos e horário | Falha de autenticação causada por diferença de relógio | [Problema 3](#problema-3-o-ms-ds-consistencyguid-não-é-gravado-no-ad) |
 | Regras de sincronização | Regras outbound no Synchronization Rules Editor com expressões e `AuthoritativeNull` | [Fase 5](#fase-5-regras-de-transformação-customizadas) |
 | PowerShell | Scripts de conferência no AD, no ADSync e no Microsoft Graph | [Validação](#validação) |
-| Virtualização | 6 VMs no VMware Workstation, com snapshots para voltar atrás | [Arquitetura](#arquitetura) |
+| Virtualização | 6 VMs no VMware Workstation, reparo de disco virtual, dimensionamento de RAM e CPU e snapshots automatizados com `vmrun` | [Fase 7](#fase-7-preparação-das-vms-do-quest-odm) |
 
 ---
 
@@ -83,6 +83,7 @@ Os detalhes de cada um estão em [Resolução de problemas](#resolução-de-prob
 | As regras de e-mail pareciam funcionar porque o Export ficava verde, mas o `@nexus.lab` continuava indo para o Tenant B | Coloquei um e-mail em um usuário de teste e conferi o objeto no connector space antes e depois | Troquei `NULL` por `AuthoritativeNull` e vi os atributos saírem como `delete` |
 | Erro WAM no login do assistente e erro de floresta "inexistente" | Separei as causas: fluxo do WAM em um caso, senha e formato do usuário no outro | Instalação concluída |
 | Na validação final, o `Connect-MgGraph` não funcionava no servidor | Separei três causas: módulo fora do caminho de módulos, falha no login por device code e teclado ABNT2 trocando símbolos ao colar comandos na VM | Comparação feita por script, com 10 de 10 IDs iguais |
+| As duas VMs do Quest ODM não ligavam: "The specified virtual disk needs repair" | Fiz backup das pastas e reparei os discos com o `vmware-vdiskmanager` em vez de recriar as VMs | VMs ligando, disco e domínio conferidos, hardware ajustado para o agente |
 
 ---
 
@@ -145,6 +146,19 @@ flowchart TB
 | `DC02-Nexus` | Controlador de domínio | `nexus.lab` | 192.168.150.20 | ele mesmo |
 | `SRV-ADC-Nexus` | Entra Connect Sync de destino (só Nexus, para o Tenant B) | `nexus.lab` | 192.168.150.21 | 192.168.150.20 |
 | `SRV-ODMAD-Nexus` | Agente do Quest ODM | `nexus.lab` | 192.168.150.22 | 192.168.150.20 |
+
+Nomes e hardware no VMware. Os arquivos das VMs têm nomes diferentes dos que aparecem na biblioteca do VMware, e o nome de uma das máquinas no Windows também é diferente. Anotei aqui para não me confundir nos scripts:
+
+| VM (biblioteca do VMware) | Arquivo `.vmx` | Nome no Windows | RAM | vCPU |
+|---|---|---|---|---|
+| `DC01 - Acme` | `DC01 - Acme.vmx` | `DC01-ACME` | 2 GB | 2 |
+| `DC02 - Nexus` | `DC02 - Nexus.vmx` | `DC02-NEXUS` | 2 GB | 2 |
+| `SRV-ADC-Acme` | `SRV-ADC-ANTIGO.vmx` | `SRV-ADC-Acme` | 2 GB | 2 |
+| `SRV-ADC-Nexus` | `SRV-ADC-NOVO.vmx` | `SRV-ADC-Nexus` | 2 GB | 2 |
+| `SRV-ODMAD-Acme` | `SRV-ODMAD-ANTIGO.vmx` | `SRV-ODM-ACME` | 6 GB | 4 |
+| `SRV-ODMAD-Nexus` | `SRV-ODMAD-NOVO.vmx` | `SRV-ODMAD-NEXUS` | 6 GB | 4 |
+
+O host é um notebook com 40 GB de RAM e 4 núcleos (8 threads). Durante a fase do ODM, os dois `SRV-ADC` ficam desligados para sobrar memória.
 
 ---
 
@@ -356,6 +370,117 @@ Get-ADSyncScheduler
 2. Rodar as conferências da [Validação](#validação).
 
 Usei `Initial` e não `Delta` porque mudanças em regras precisam ser aplicadas a todos os objetos. O `Delta` só reprocessa o que mudou no AD.
+
+---
+
+### Fase 7: Preparação das VMs do Quest ODM
+
+**Objetivo:** deixar o `SRV-ODMAD-Acme` e o `SRV-ODMAD-Nexus` prontos para receber o agente do Directory Sync.
+
+#### Requisitos do agente
+
+Conferi na documentação atual da Quest (*Directory Sync Requirements*):
+
+| Item | Mínimo |
+|---|---|
+| CPU | 4 núcleos |
+| Memória | 4 GB **livres** |
+| Disco | 40 GB livres além do sistema |
+| Sistema | Windows Server 2016, 2019 ou 2022 |
+| .NET | 4.7.2 (o instalador instala se faltar) |
+| TLS | 1.2 ou superior |
+| Onde instalar | Servidor membro do domínio, nunca em DC de produção |
+| Rede | Saída na porta 443 para o serviço da Quest e acesso aos DCs |
+
+As VMs estavam com 2 GB e 2 vCPUs, abaixo do mínimo.
+
+#### Dimensionamento
+
+Antes de aumentar a memória, medi o que o notebook tinha livre:
+
+```powershell
+# No host
+$cs = Get-CimInstance Win32_ComputerSystem
+$os = Get-CimInstance Win32_OperatingSystem
+[pscustomobject]@{
+    'RAM total (GB)'  = [math]::Round($cs.TotalPhysicalMemory/1GB,1)
+    'RAM livre (GB)'  = [math]::Round($os.FreePhysicalMemory/1MB,1)
+    'Núcleos físicos' = (Get-CimInstance Win32_Processor | Measure-Object NumberOfCores -Sum).Sum
+    'Threads'         = $cs.NumberOfLogicalProcessors
+}
+```
+
+Com os DCs ligados sobravam 16,7 GB. Escolhi 6 GB para cada `SRV-ODMAD`: o Windows Server 2022 sozinho usa perto de 2 GB, então 4 GB não deixariam os 4 GB livres que a Quest pede, e 8 GB em cada uma deixariam o host sem folga. As duas com 4 vCPUs mais os DCs somam 12 vCPUs para 8 threads, o que funciona num lab porque as VMs passam a maior parte do tempo paradas.
+
+#### Ajuste do hardware pelo `.vmx`
+
+Em vez de abrir as configurações de cada VM, editei o `.vmx` pelo PowerShell, com as VMs desligadas e as abas delas fechadas no VMware:
+
+```powershell
+$vmrun = "C:\Program Files\VMware\VMware Workstation\vmrun.exe"
+$vms   = Get-ChildItem "<pasta das VMs>" -Recurse -Filter *.vmx |
+         Where-Object { $_.Extension -eq '.vmx' -and $_.FullName -notmatch 'Template' }
+$alvos = $vms | Where-Object FullName -match 'ODMAD'
+
+foreach ($vm in $alvos) {
+    $arq = $vm.FullName
+    Copy-Item $arq "$arq.bak"
+    $cfg = Get-Content $arq | Where-Object { $_ -notmatch '^(memsize|numvcpus|cpuid\.coresPerSocket)\s*=' }
+    $cfg += 'memsize = "6144"'
+    $cfg += 'numvcpus = "4"'
+    $cfg += 'cpuid.coresPerSocket = "4"'
+    Set-Content $arq $cfg -Encoding ASCII
+}
+```
+
+> [!NOTE]
+> O `-Filter *.vmx` do Windows também traz os arquivos `.vmxf`, por isso o filtro extra em `Extension -eq '.vmx'`.
+
+#### Conferência dentro de cada VM
+
+```powershell
+chkdsk C: /scan                                  # disco sem erros
+Test-ComputerSecureChannel -Verbose              # relação com o domínio (True)
+nltest /dsgetdc:acme.lab                         # encontra o DC da Acme
+nltest /dsgetdc:nexus.lab                        # encontra o DC da Nexus
+Get-CimInstance Win32_ComputerSystem | Select-Object TotalPhysicalMemory, NumberOfLogicalProcessors
+Test-NetConnection quest-on-demand.com -Port 443 # saída para o ODM
+```
+
+Resultado nas duas: disco sem problemas, canal seguro `True`, os dois DCs encontrados (os encaminhadores condicionais funcionando), 6 GB, 4 processadores e `TcpTestSucceeded : True`.
+
+#### Snapshots pelo `vmrun`
+
+Desligar e tirar snapshot de seis VMs pela interface dá trabalho, então usei o `vmrun`, que vem com o VMware Workstation:
+
+```powershell
+# Desliga os membros primeiro e os DCs por último
+$ligadas = & $vmrun list | Select-Object -Skip 1
+$ligadas | Where-Object { $_ -notmatch 'DC0' } | ForEach-Object { & $vmrun -T ws stop $_ soft }
+$ligadas | Where-Object { $_ -match 'DC0' }    | ForEach-Object { & $vmrun -T ws stop $_ soft }
+
+# Snapshot de todas
+$vms | ForEach-Object { & $vmrun -T ws snapshot $_.FullName "02 - Sync validado, antes do ODM" }
+
+# Conferência
+$vms | ForEach-Object { $_.Name; & $vmrun -T ws listSnapshots $_.FullName }
+
+# Liga os DCs e, 2 minutos depois, os servidores do ODM
+$vms | Where-Object FullName -match 'DC0'   | ForEach-Object { & $vmrun -T ws start $_.FullName }
+Start-Sleep 120
+$vms | Where-Object FullName -match 'ODMAD' | ForEach-Object { & $vmrun -T ws start $_.FullName }
+```
+
+| Snapshot | VMs | Estado |
+|---|---|---|
+| `02 - Sync validado, antes do ODM` | As 6 | Sincronização validada, 10 de 10 IDs iguais |
+| `03 - ODMAD reparada, 6GB-4vCPU, antes do agente` | As duas `SRV-ODMAD` | Discos reparados e hardware ajustado |
+
+> [!TIP]
+> Com a VM ligada, o snapshot salva também a memória. O das `SRV-ODMAD`, com 6 GB, levou uns 8 minutos, e o `vmrun` não mostra progresso nem devolveu o prompt no final. Para saber se estava andando, olhei os arquivos da pasta da VM: quando o `.vmem` do snapshot chegou a 6144 MB e o `.vmsn` foi gravado, o snapshot já estava pronto. Com a VM desligada, leva segundos.
+
+> [!WARNING]
+> Para voltar um snapshot, volto todas as VMs juntas para o mesmo ponto. Voltar só um DC ou só um servidor do Entra Connect deixa as máquinas fora de sincronia entre si (no AD, isso pode causar USN rollback). E os tenants não voltam junto: o que já foi para a nuvem continua lá.
 
 ---
 
@@ -597,6 +722,32 @@ Toda janela nova do PowerShell precisa desse `Import-Module`, a não ser que a p
 
 ---
 
+### Problema 7: as VMs do Quest ODM não ligavam ("virtual disk needs repair")
+
+| | |
+|---|---|
+| **Sintoma** | Ao ligar o `SRV-ODMAD-Nexus` e depois o `SRV-ODMAD-Acme`, o VMware mostrava *"The specified virtual disk needs repair"*, *"Cannot open the disk ...-000001.vmdk or one of the snapshot disks it depends on"* e *"Module 'Disk' power on failed"*. |
+| **Causa** | O disco base das duas VMs estava corrompido. O VMware dizia que a última vez que elas foram ligadas foi em 10/11, mas os arquivos do disco foram gravados até a noite de 11/11. Isso indica que elas ficaram ligadas e foram desligadas de forma brusca. Não confirmei o que causou o desligamento. O snapshot tirado antes só fez o VMware abrir o disco e perceber o problema. |
+| **Solução** | Backup da pasta da VM e reparo dos discos com o `vmware-vdiskmanager`. |
+
+```powershell
+# No host, com a VM desligada e a aba dela fechada no VMware
+$pasta = "<pasta das VMs>\03 - Quest ODM Tools\SRV-ODMAD-NOVO"
+Copy-Item $pasta "$pasta-BACKUP" -Recurse
+
+$vdm = "C:\Program Files\VMware\VMware Workstation\vmware-vdiskmanager.exe"
+& $vdm -R "$pasta\Template-Server-cl1.vmdk"          # disco base
+& $vdm -R "$pasta\Template-Server-cl1-000001.vmdk"   # disco do snapshot
+```
+
+Nas duas VMs a resposta foi *"was corrupted and has been successfully repaired"* para o disco base. O disco do snapshot não precisou de reparo. O `-R` é aplicado no `.vmdk` pequeno, que descreve o disco, e não nos pedaços `-s001`, `-s002` e assim por diante.
+
+Depois do reparo, liguei as VMs e rodei dentro delas o `chkdsk C: /scan` e o `Test-ComputerSecureChannel` (ver [Fase 7](#conferência-dentro-de-cada-vm)). Com tudo certo, apaguei os backups.
+
+**Prevenção:** desligar as VMs pelo Windows antes de desligar ou suspender o notebook. Se acontecer de novo e o reparo falhar, uma VM ainda vazia é mais rápido recriar a partir do template do que insistir no disco.
+
+---
+
 ## Lições aprendidas
 
 1. **A ordem de instalação faz parte da arquitetura.** O primeiro Entra Connect grava o atributo no AD e o segundo só lê. Se a ordem muda, ou se o segundo servidor escolhe o anchor sozinho, o match se perde.
@@ -609,6 +760,8 @@ Toda janela nova do PowerShell precisa desse `Import-Module`, a não ser que a p
 8. **Entra Connect Sync em vez de Cloud Sync** quando o cenário exige escolher o Source Anchor e criar regras próprias.
 9. **Conferir com script.** Comparar o `immutableId` dos dois tenants por PowerShell me deu mais segurança do que olhar alguns usuários no portal.
 10. **Base64 diferencia maiúsculas de minúsculas.** Ao copiar um ID de um print, eu tinha trocado um `I` maiúsculo por um `l` minúsculo. No olho parece igual, mas é outro valor. Por isso a comparação final usa `-ceq`.
+11. **Medir o host antes de dar memória para as VMs.** O notebook sozinho usava uns 19 GB. Sem conferir isso, eu teria colocado 8 GB em cada VM e travado tudo.
+12. **Disco "needs repair" tem conserto.** Antes de apagar e recriar uma VM, vale um backup da pasta e um `vmware-vdiskmanager -R`. Levou poucos minutos e salvou as duas VMs.
 
 ---
 
@@ -625,6 +778,7 @@ O laboratório tem simplificações que não caberiam em produção:
 | Global Admin e Enterprise Admin para tudo | Contas de serviço só com as permissões necessárias |
 | Bloqueio de tela desativado nas VMs | Bloqueio de tela e tempo de inatividade mantidos, porque são controles de segurança |
 | Usuários de teste | Comunicação com os usuários, janela de manutenção e plano de rollback |
+| Agente do ODM em VM com 6 GB, junto com outras VMs num notebook | Servidor dedicado com folga de recursos, conforme os requisitos da Quest |
 
 ---
 
@@ -675,18 +829,27 @@ Os prints de antes e depois estão no [problema 5](#problema-5-as-regras-com-nul
 | Entra Connect Sync de destino (Nexus para o Tenant B) | Concluída |
 | Regras de transformação | Concluída |
 | Conferência do `immutableId` entre os tenants | Concluída (10 de 10) |
-| Instalação dos agentes do Quest ODM | Próxima etapa |
-| Discovery e mapeamento de usuários e grupos no ODM | Planejada |
-| Migração de dados por módulo (e-mail, OneDrive, Teams) | Planejada |
+| Preparação das VMs do ODM (reparo de disco, hardware, conectividade) | Concluída |
+| ODM M365: tenants, contas, e-mail, OneDrive e Teams | Próxima etapa |
+| Directory Sync: agentes nas duas florestas | Planejada |
+| ODM Active Directory: migração de estação | Planejada |
+
+O objetivo das próximas fases é praticar os três produtos do Quest On Demand que aparecem juntos num projeto real. A ordem vai do mais simples para o mais complexo, porque cada fase aproveita o que a anterior deixou pronto:
+
+| Fase | Produto | O que vou praticar | Usa os `SRV-ODMAD`? |
+|---|---|---|---|
+| 1 | ODM M365 | Conectar os dois tenants, Discovery, casar as contas da Nexus com as que já existem no Tenant B e migrar e-mail, OneDrive e Teams | Não, roda na nuvem |
+| 2 | Directory Sync | Ambientes das duas florestas e dos dois tenants, um agente por floresta, workflows de leitura e escrita, sincronização de objetos e de senha | Sim, um agente em cada |
+| 3 | ODM Active Directory | Agente de dispositivo numa estação, ReACL e cutover da máquina | Precisa de uma estação Windows 10 ou 11 no `nexus.lab` |
 
 Próximas ações:
 
-- [ ] Instalar os agentes do Quest ODM no `SRV-ODMAD-Acme` e no `SRV-ODMAD-Nexus`, conferindo os requisitos na documentação da Quest.
-- [ ] Conectar o Tenant Origem e o Tenant B no ODM.
+- [ ] Conectar o Tenant Origem e o Tenant B no Quest On Demand.
 - [ ] Rodar o Discovery de contas e grupos.
-- [ ] Definir como o ODM vai casar as contas. O mesmo usuário tem UPN diferente em cada tenant (só a parte antes do `@` é igual), então o match não pode ser pelo UPN completo.
-- [ ] Mapear usuários e grupos entre origem e destino e conferir o resultado.
-- [ ] Migrar os dados módulo por módulo e registrar os resultados aqui.
+- [ ] Definir como o ODM vai casar as contas. No Tenant B as contas já existem, criadas pelo Entra Connect, então o ODM deve casar e não criar. O UPN do mesmo usuário é diferente em cada tenant (só a parte antes do `@` é igual), então o match não pode ser pelo UPN completo.
+- [ ] Migrar e-mail, OneDrive e Teams de alguns usuários de teste e registrar os resultados aqui.
+- [ ] Instalar os agentes do Directory Sync no `SRV-ODMAD-Acme` e no `SRV-ODMAD-Nexus`.
+- [ ] Criar uma VM Windows 10 ou 11 no `nexus.lab` para a fase do ODM Active Directory.
 
 ---
 
@@ -697,6 +860,7 @@ Próximas ações:
 - [Microsoft Entra Connect Sync: agendador (scheduler)](https://learn.microsoft.com/en-us/entra/identity/hybrid/connect/how-to-connect-sync-feature-scheduler)
 - [Microsoft Graph PowerShell SDK: instalação](https://learn.microsoft.com/en-us/powershell/microsoftgraph/installation)
 - [Quest On Demand Migration: documentação técnica](https://support.quest.com/on-demand-migration)
+- [Quest On Demand Migration: requisitos do Directory Sync](https://support.quest.com/technical-documents/doc1676287)
 
 ---
 
