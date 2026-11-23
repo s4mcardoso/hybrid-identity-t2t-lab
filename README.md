@@ -656,6 +656,10 @@ gpupdate /force
 auditpol /get /category:"Account Management","DS Access"   # Success and Failure
 ```
 
+Resultado no DC01: todas as subcategorias de *Account Management* e *DS Access* ficaram com *Success and Failure*.
+
+![auditpol no DC01](docs/img/22-auditpol-dc01.png)
+
 > [!NOTE]
 > Na lista da GPO, os nomes aparecem cortados e o primeiro item é *Audit account **logon** events*, que é outra política. Acabei marcando ela também. Não atrapalha: o DC só registra também os eventos de autenticação.
 
