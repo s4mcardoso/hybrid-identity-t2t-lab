@@ -521,7 +521,7 @@ Em *Migrate > Directory Sync*, menu *Settings > Environments > New > Local*:
 | `Acme-AD` | `SRV-ODM-ACME` | 192.168.150.10 |
 | `Nexus-AD` | `SRV-ODMAD-NEXUS` | 192.168.150.20 |
 
-Ao salvar, o portal mostra a tela *Deploy a new agent*, com o botão de download, a **Registration URL** e a **Registration Key**. A chave liga o agente à organização no Quest On Demand, então tratei como senha: não aparece em nenhum print publicado.
+Ao salvar, o portal mostra a tela *Deploy a new agent*, com o botão de download, a **Registration URL** e a **Registration Key**. A chave liga o agente à organização no Quest On Demand, então tratei como senha.
 
 #### 3. Download do agente
 
@@ -548,7 +548,7 @@ Get-AuthenticodeSignature "$env:USERPROFILE\Downloads\ODMAD_DS_Agent.exe" | Form
 | Passphrase for Password Sync | Definida | A mesma da Acme | Segredo combinado entre o agente e o filtro de senha que vai nos DCs |
 | SID History Migration | Em branco | `acme.lab` e `svc-odm@acme.lab` | A Nexus é o destino da migração AD para AD, então o agente dela precisa de acesso à origem |
 
-Algumas telas do instalador (a Registration Key foi escondida):
+Algumas telas do instalador:
 
 | Register Agent | Domain and Credentials |
 |---|---|
@@ -1012,7 +1012,7 @@ O laboratório tem simplificações que não caberiam em produção:
 
 ## Evidências
 
-Capturas de tela do laboratório, com o nome dos tenants escondido.
+Capturas de tela do laboratório.
 
 ### O `ms-DS-ConsistencyGuid` gravado no AD
 
