@@ -20,7 +20,7 @@ Projeto de estudo pessoal. Montei do zero um ambiente com duas florestas Active 
 |---|---|
 | **O que montei** | 6 servidores Windows Server 2022, 2 florestas Active Directory e 2 tenants Microsoft 365, simulando a separação de uma empresa de um grupo. |
 | **O problema** | Sincronizar a mesma floresta para dois tenants ao mesmo tempo, com o mesmo identificador para cada usuário nos dois lados. Sem isso, a migração gera contas duplicadas. |
-| **Resultado** | Os 10 usuários da Nexus com o mesmo `immutableId` nos dois tenants, conferido por script, regras de sincronização próprias, oito problemas resolvidos e documentados, os agentes do Quest Directory Sync conectados nas duas florestas e os pré-requisitos de SID History em andamento. |
+| **Resultado** | Os 10 usuários da Nexus com o mesmo `immutableId` nos dois tenants, conferido por script, regras de sincronização próprias, oito problemas resolvidos e documentados, os agentes do Quest Directory Sync conectados nas duas florestas e os pré-requisitos de SID History prontos, com trust entre as florestas. |
 
 ---
 
@@ -601,9 +601,9 @@ O Discovery roda sozinho a cada 24 horas a partir da primeira leitura. Depois de
 | 2 | `TcpipClientSupport = 1` no PDC de origem, com reinicialização | DC01 | Feito |
 | 3 | Auditoria de *account management* e *directory service access* | DC01 e DC02 | Feito |
 | 4 | Permissão *MigrateSIDHistory* no destino | `nexus.lab` | Já atendido: a `svc-odm@nexus.lab` está no Domain Admins |
-| 5 | Trust entre as florestas, com SID History liberado na trust | DC01 e DC02 | Pendente |
-| 6 | Conta do destino no grupo Administrators do PDC de origem | DC01 | Pendente (depende da trust) |
-| 7 | Pasta compartilhada na Acme para provar o acesso depois da migração | Acme | Pendente |
+| 5 | Trust entre as florestas, com SID History liberado na trust | DC01 e DC02 | Feito |
+| 6 | Conta do destino no grupo Administrators do PDC de origem | DC01 | Feito |
+| 7 | Pasta compartilhada na Acme para provar o acesso depois da migração | DC01 | Feito |
 
 Antes de mexer em registro, auditoria e trust, tirei snapshot dos dois DCs.
 
@@ -663,12 +663,111 @@ Resultado no DC01: todas as subcategorias de *Account Management* e *DS Access* 
 > [!NOTE]
 > Na lista da GPO, os nomes aparecem cortados e o primeiro item é *Audit account **logon** events*, que é outra política. Acabei marcando ela também. Não atrapalha: o DC só registra também os eventos de autenticação.
 
+#### 4. Trust entre as florestas
+
+A Quest consegue preencher o `sIDHistory` sem trust, mas para usar o SID antigo contra os recursos da Acme é preciso que a Acme confie na Nexus. Antes de criar, conferi DNS e relógio nos dois DCs:
+
+```powershell
+# No DC01 (no DC02, o mesmo trocando para acme.lab)
+Resolve-DnsName nexus.lab
+Resolve-DnsName -Type SRV _ldap._tcp.dc._msdcs.nexus.lab
+Get-Date
+```
+
+Cada DC encontrou o outro (`dc02-nexus.nexus.lab` e `dc01-acme.acme.lab`, porta 389) e os relógios batiam. A trust usa Kerberos, então horário diferente derruba a criação.
+
+No DC01, em *Active Directory Domains and Trusts > acme.lab > Properties > Trusts > New Trust*:
+
+| Tela | Escolha |
+|---|---|
+| Trust Name | `nexus.lab` |
+| Trust Type | Forest trust |
+| Direction of Trust | Two-way |
+| Sides of Trust | Both this domain and the specified domain |
+| Credenciais | `administrator@nexus.lab` |
+| Authentication Level (as duas florestas) | Forest-wide authentication |
+| Confirm Outgoing / Incoming Trust | Yes, confirm |
+
+Usei two-way para poder testar nos dois sentidos. Num projeto real eu criaria só a direção necessária.
+
+| `acme.lab` | `nexus.lab` |
+|---|---|
+| ![Trust no lado da Acme](docs/img/23-trust-acme.png) | ![Trust no lado da Nexus](docs/img/24-trust-nexus.png) |
+
+Para conferir, o `netdom trust acme.lab /domain:nexus.lab /verify` respondeu só *"The command failed to complete successfully"*, sem motivo. Para verificar os dois lados ele precisa de uma credencial da Nexus (`/UserO:administrator@nexus.lab /PasswordO:*`). O `nltest` testa o canal da trust direto e não precisa disso:
+
+```powershell
+nltest /sc_query:nexus.lab
+# Trusted DC Name \\DC02-NEXUS.nexus.lab
+# Trusted DC Connection Status Status = 0 0x0 NERR_Success
+```
+
+#### 5. SID History liberado na trust
+
+Por padrão, uma trust de floresta descarta SIDs de outros domínios que chegam junto com o login (*SID filtering*). O usuário migrado vai chegar na Acme carregando o SID antigo da Acme, e é a Acme que precisa aceitar. Por isso o comando roda no lado que confia, o DC01:
+
+```powershell
+netdom trust acme.lab /domain:nexus.lab /enablesidhistory:yes
+# Enabling SID history for this trust.
+
+netdom trust acme.lab /domain:nexus.lab /enablesidhistory
+# SID history is enabled for this trust.
+
+Get-ADTrust -Identity nexus.lab | Select-Object Name, Direction, ForestTransitive, SIDFilteringForestAware, SIDFilteringQuarantined
+```
+
+| Propriedade | Valor |
+|---|---|
+| Direction | BiDirectional |
+| ForestTransitive | True |
+| SIDFilteringForestAware | True |
+| SIDFilteringQuarantined | False |
+
+> [!WARNING]
+> Liberar o SID History afrouxa uma proteção da trust. Em produção, isso fica ligado só durante a migração e é desfeito no final (`/enablesidhistory:no`), depois que as permissões dos recursos forem refeitas com as contas novas.
+
+#### 6. Conta do destino no Administrators da Acme
+
+Com a trust criada, o DC01 passa a enxergar contas da Nexus. Num DC, o `net localgroup Administrators` mexe no grupo BUILTIN\Administrators do domínio:
+
+```powershell
+# No DC01
+net localgroup Administrators NEXUS\svc-odm /add
+net localgroup Administrators
+```
+
+![NEXUS\svc-odm no grupo Administrators da Acme](docs/img/25-administrators-acme.png)
+
+#### 7. Pasta de teste na Acme
+
+Para provar o SID History, criei uma pasta com permissão só para o `teste.acme1`, sem grupo. Se ele continuar abrindo a pasta depois de migrado para a Nexus, a única explicação é o SID antigo na conta nova.
+
+```powershell
+# No DC01
+Get-ADUser teste.acme1 | Select-Object SamAccountName, SID
+New-Item C:\Financeiro -ItemType Directory
+Set-Content C:\Financeiro\relatorio.txt "Arquivo de teste do SID History"
+icacls C:\Financeiro /inheritance:r /grant "ACME\Domain Admins:(OI)(CI)F" "SYSTEM:(OI)(CI)F" "ACME\teste.acme1:(OI)(CI)M"
+New-SmbShare -Name Financeiro -Path C:\Financeiro -FullAccess "Everyone"
+icacls C:\Financeiro
+Get-SmbShare Financeiro
+```
+
+O compartilhamento fica aberto para Everyone e quem decide o acesso é a permissão NTFS, que ficou assim:
+
+```
+C:\Financeiro ACME\teste.acme1:(OI)(CI)(M)
+              NT AUTHORITY\SYSTEM:(OI)(CI)(F)
+              ACME\Domain Admins:(OI)(CI)(F)
+```
+
+O SID do `teste.acme1` na Acme é `S-1-5-21-2792967527-818994920-2376679453-1604`. É esse valor que precisa aparecer no `sIDHistory` da conta nova na Nexus depois da migração.
+
 #### Próximos passos desta fase
 
-- Criar a trust entre `acme.lab` e `nexus.lab` (os encaminhadores condicionais de DNS já existem) e liberar o SID History nela.
-- Colocar a conta do destino no grupo Administrators do PDC da Acme.
-- Criar uma pasta compartilhada na Acme com permissão para um usuário de teste.
 - Conferir se a conta `svc-odm@acme.lab` ficou gravada no agente da Nexus.
+- Criar o workflow no Directory Sync para levar o `teste.acme1` da Acme para a Nexus com SID History.
+- Conferir o `sIDHistory` da conta nova e testar o acesso a `\\DC01-ACME\Financeiro` com ela.
 
 ---
 
@@ -990,6 +1089,8 @@ O `,0x8` no `manualpeerlist` faz o Windows usar o modo cliente do NTP, que funci
 14. **Algumas telas do instalador preparam funções futuras.** Passphrase e conta de SID History não ligam nada na hora, mas deixar em branco pode exigir reconfigurar o agente depois.
 15. **VM suspensa volta com o relógio parado.** Num DC, isso é grave, e o Windows nem deixa corrigir uma diferença grande com o `w32tm`. Agora confiro o relógio dos DCs sempre que retomo o lab.
 16. **`$` em nome de objeto vai entre aspas simples no PowerShell.** Com aspas duplas, `ACME$$$` seria interpretado como variável.
+17. **Trust de floresta filtra SID por padrão.** Sem o `/enablesidhistory:yes` no lado que confia, o SID antigo seria descartado e o teste falharia mesmo com o `sIDHistory` preenchido.
+18. **`nltest /sc_query` diz mais que o `netdom /verify`.** O `netdom` falhou sem motivo; o `nltest` mostrou na hora que o canal da trust estava OK.
 
 ---
 
@@ -1006,6 +1107,7 @@ O laboratório tem simplificações que não caberiam em produção:
 | Global Admin e Enterprise Admin para tudo | Contas de serviço só com as permissões necessárias |
 | Bloqueio de tela desativado nas VMs | Bloqueio de tela e tempo de inatividade mantidos, porque são controles de segurança |
 | Usuários de teste | Comunicação com os usuários, janela de manutenção e plano de rollback |
+| Trust two-way com SID History liberado sem prazo | Trust só na direção necessária e SID History desligado ao fim da migração |
 | Agente do ODM em VM com 6 GB, junto com outras VMs num notebook | Servidor dedicado com folga de recursos, conforme os requisitos da Quest |
 
 ---
@@ -1060,7 +1162,7 @@ Os prints de antes e depois estão no [problema 5](#problema-5-as-regras-com-nul
 | Preparação das VMs do ODM (reparo de disco, hardware, conectividade) | Concluída |
 | Directory Sync: agentes nas duas florestas | Concluída |
 | ODM M365: tenants, contas, e-mail, OneDrive e Teams | Planejada |
-| SID History: pré-requisitos | Em andamento (faltam a trust e a pasta de teste) |
+| SID History: pré-requisitos | Concluída |
 | Migração AD para AD com SID History | Planejada |
 | ODM Active Directory: migração de estação | Planejada |
 
@@ -1079,8 +1181,7 @@ Próximas ações:
 - [ ] Definir como o ODM vai casar as contas. No Tenant B as contas já existem, criadas pelo Entra Connect, então o ODM deve casar e não criar. O UPN do mesmo usuário é diferente em cada tenant (só a parte antes do `@` é igual), então o match não pode ser pelo UPN completo.
 - [ ] Migrar e-mail, OneDrive e Teams de alguns usuários de teste e registrar os resultados aqui.
 - [ ] Conferir se a conta de SID History (`svc-odm@acme.lab`) ficou gravada no agente da Nexus.
-- [ ] Criar a trust entre as florestas e liberar o SID History nela.
-- [ ] Colocar a conta do destino no grupo Administrators do PDC da Acme e criar a pasta de teste.
+- [ ] Migrar o `teste.acme1` da Acme para a Nexus com SID History e testar o acesso à pasta `Financeiro`.
 - [ ] Instalar o filtro de senha nos DCs e testar a sincronização de senha.
 - [ ] Criar uma VM Windows 10 ou 11 no `nexus.lab` para a fase do ODM Active Directory.
 
