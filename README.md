@@ -20,7 +20,7 @@ Projeto de estudo pessoal. Montei do zero um ambiente com duas florestas Active 
 |---|---|
 | **O que montei** | 6 servidores Windows Server 2022, 2 florestas Active Directory e 2 tenants Microsoft 365, simulando a separação de uma empresa de um grupo. |
 | **O problema** | Sincronizar a mesma floresta para dois tenants ao mesmo tempo, com o mesmo identificador para cada usuário nos dois lados. Sem isso, a migração gera contas duplicadas. |
-| **Resultado** | Os 10 usuários da Nexus com o mesmo `immutableId` nos dois tenants, conferido por script, regras de sincronização próprias, sete problemas resolvidos e documentados e os agentes do Quest Directory Sync conectados nas duas florestas. |
+| **Resultado** | Os 10 usuários da Nexus com o mesmo `immutableId` nos dois tenants, conferido por script, regras de sincronização próprias, oito problemas resolvidos e documentados, os agentes do Quest Directory Sync conectados nas duas florestas e os pré-requisitos de SID History em andamento. |
 
 ---
 
@@ -63,7 +63,7 @@ O que eu queria aprender:
 |---|---|---|
 | Identidade híbrida | Instalação customizada do Entra Connect Sync, Password Hash Sync, escolha e conferência do Source Anchor | [Passo a passo](#passo-a-passo) |
 | Arquitetura de identidade | Estratégia para manter o `immutableId` igual em dois tenants usando o `ms-DS-ConsistencyGuid` | [Estratégia de identidade](#estratégia-de-identidade) |
-| Active Directory | Duas florestas, contas Enterprise Admin, atributos de usuário | [Pré-requisitos](#pré-requisitos) |
+| Active Directory | Duas florestas, contas Enterprise Admin, atributos de usuário, pré-requisitos de SID History (grupo `$$$`, registro no PDC, auditoria por GPO) | [Fase 9](#fase-9-pré-requisitos-do-sid-history) |
 | DNS | DNS por floresta e encaminhadores condicionais | [Infraestrutura](#infraestrutura) |
 | Kerberos e horário | Falha de autenticação causada por diferença de relógio | [Problema 3](#problema-3-o-ms-ds-consistencyguid-não-é-gravado-no-ad) |
 | Regras de sincronização | Regras outbound no Synchronization Rules Editor com expressões e `AuthoritativeNull` | [Fase 5](#fase-5-regras-de-transformação-customizadas) |
@@ -84,6 +84,7 @@ Os detalhes de cada um estão em [Resolução de problemas](#resolução-de-prob
 | As regras de e-mail pareciam funcionar porque o Export ficava verde, mas o `@nexus.lab` continuava indo para o Tenant B | Coloquei um e-mail em um usuário de teste e conferi o objeto no connector space antes e depois | Troquei `NULL` por `AuthoritativeNull` e vi os atributos saírem como `delete` |
 | Erro WAM no login do assistente e erro de floresta "inexistente" | Separei as causas: fluxo do WAM em um caso, senha e formato do usuário no outro | Instalação concluída |
 | Na validação final, o `Connect-MgGraph` não funcionava no servidor | Separei três causas: módulo fora do caminho de módulos, falha no login por device code e teclado ABNT2 trocando símbolos ao colar comandos na VM | Comparação feita por script, com 10 de 10 IDs iguais |
+| O DC da Acme voltou 3 dias atrasado depois de ficar suspenso, e o `w32tm` se recusou a corrigir | Acertei a data manualmente, reconfigurei a fonte NTP e testei a comunicação com `w32tm /stripchart` | DC sincronizado com o `ntp.br`, sem risco para o Kerberos |
 | As duas VMs do Quest ODM não ligavam: "The specified virtual disk needs repair" | Fiz backup das pastas e reparei os discos com o `vmware-vdiskmanager` em vez de recriar as VMs | VMs ligando, disco e domínio conferidos, hardware ajustado para o agente |
 
 ---
@@ -526,7 +527,11 @@ Ao salvar, o portal mostra a tela *Deploy a new agent*, com o botão de download
 
 Baixei o instalador **dentro de cada `SRV-ODMAD`**, pelo navegador da própria VM. Assim a URL e a chave são copiadas e coladas no mesmo lugar, sem passar pelo console do VMware, que já tinha trocado símbolos por causa do teclado ABNT2 (ver [problema 6](#problema-6-o-connect-mggraph-não-funcionava-no-servidor)).
 
-O Edge barrou o `ODMAD_DS_Agent.exe` com o aviso do SmartScreen (*"isn't commonly downloaded"*, *Publisher: Unknown*). O arquivo vem do domínio oficial da Quest, pela página autenticada do portal, então liberei em *... > Keep > Keep anyway*. Antes de executar, vale conferir a assinatura:
+O Edge barrou o `ODMAD_DS_Agent.exe` com o aviso do SmartScreen (*"isn't commonly downloaded"*, *Publisher: Unknown*). O arquivo vem do domínio oficial da Quest, pela página autenticada do portal, então liberei em *... > Keep > Keep anyway*.
+
+<img src="docs/img/15-smartscreen.png" alt="Aviso do SmartScreen para o instalador do agente" width="380">
+
+Antes de executar, vale conferir a assinatura:
 
 ```powershell
 Get-AuthenticodeSignature "$env:USERPROFILE\Downloads\ODMAD_DS_Agent.exe" | Format-List Status, SignerCertificate
@@ -543,6 +548,20 @@ Get-AuthenticodeSignature "$env:USERPROFILE\Downloads\ODMAD_DS_Agent.exe" | Form
 | Passphrase for Password Sync | Definida | A mesma da Acme | Segredo combinado entre o agente e o filtro de senha que vai nos DCs |
 | SID History Migration | Em branco | `acme.lab` e `svc-odm@acme.lab` | A Nexus é o destino da migração AD para AD, então o agente dela precisa de acesso à origem |
 
+Algumas telas do instalador (a Registration Key foi escondida):
+
+| Register Agent | Domain and Credentials |
+|---|---|
+| ![Tela Register Agent](docs/img/10-agente-register.png) | ![Tela Domain and Credentials](docs/img/11-agente-dominio.png) |
+
+| Service Credential | Passphrase for Password Sync |
+|---|---|
+| ![Tela Service Credential](docs/img/12-agente-service-credential.png) | ![Tela da passphrase](docs/img/13-agente-passphrase.png) |
+
+SID History no agente da Nexus, com a conta da origem:
+
+![Tela SID History Migration no agente da Nexus](docs/img/14-agente-sid-history.png)
+
 **A passphrase.** A sincronização de senha moderna da Quest instala um filtro de senha no LSASS dos DCs. Quando o usuário troca a senha, o filtro captura a senha nova e entrega para o agente, que replica para o outro ambiente. A passphrase serve para o agente só aceitar mensagens desse filtro. Por isso ela é definida agora, no agente, e digitada de novo quando o filtro for instalado. Preencher o campo não liga nada: a sincronização de senha só começa quando o filtro for instalado e a função for configurada no portal.
 
 **O SID History.** Cada conta do AD tem um SID, e as permissões de arquivos e pastas apontam para ele. Ao migrar um usuário para outra floresta, a conta nova ganha outro SID e perderia o acesso aos recursos antigos. O SID History faz a conta nova carregar o SID antigo. Escolhi a direção `acme.lab` (origem) para `nexus.lab` (destino), o que encaixa no cenário: funcionários da Acme que passam para a Nexus na separação.
@@ -557,6 +576,8 @@ Get-AuthenticodeSignature "$env:USERPROFILE\Downloads\ODMAD_DS_Agent.exe" | Form
 Get-Service ODMDirectorySync | Select-Object Status, StartType   # Running / Automatic
 ```
 
+![Serviço do agente rodando na SRV-ODMAD-Acme](docs/img/16-servico-agente.png)
+
 No portal, em *Environments*, os dois ambientes ficaram com **Agents: OK** e **Discovery: Discovered**:
 
 ![Ambientes do Directory Sync com os dois agentes OK](docs/img/09-directory-sync-environments.png)
@@ -565,6 +586,85 @@ O Discovery roda sozinho a cada 24 horas a partir da primeira leitura. Depois de
 
 > [!TIP]
 > O horário da última leitura da Acme aparecia como 4:00 no navegador da `SRV-ODMAD-Acme` e como 9:00 no da `SRV-ODMAD-Nexus`. Era o mesmo horário mostrado em fusos diferentes: a `SRV-ODMAD-Acme` estava no fuso do Pacífico, herdado do template. A correção é `tzutil /s "E. South America Standard Time"` seguido de `w32tm /resync /force`.
+
+---
+
+### Fase 9: Pré-requisitos do SID History
+
+**Objetivo:** preparar as duas florestas para migrar usuários da Acme para a Nexus mantendo o SID antigo no `sIDHistory` da conta nova, para que o usuário migrado continue acessando os recursos da Acme.
+
+**Direção:** `acme.lab` (origem) para `nexus.lab` (destino).
+
+| # | Pré-requisito (documentação da Quest) | Onde | Status |
+|---|---|---|---|
+| 1 | Grupo Domain Local vazio `ACME$$$` | `acme.lab` | Feito |
+| 2 | `TcpipClientSupport = 1` no PDC de origem, com reinicialização | DC01 | Feito |
+| 3 | Auditoria de *account management* e *directory service access* | DC01 e DC02 | Feito |
+| 4 | Permissão *MigrateSIDHistory* no destino | `nexus.lab` | Já atendido: a `svc-odm@nexus.lab` está no Domain Admins |
+| 5 | Trust entre as florestas, com SID History liberado na trust | DC01 e DC02 | Pendente |
+| 6 | Conta do destino no grupo Administrators do PDC de origem | DC01 | Pendente (depende da trust) |
+| 7 | Pasta compartilhada na Acme para provar o acesso depois da migração | Acme | Pendente |
+
+Antes de mexer em registro, auditoria e trust, tirei snapshot dos dois DCs.
+
+#### 1. Grupo `ACME$$$`
+
+O nome é o NetBIOS do domínio de origem seguido de `$$$`. Conferi o NetBIOS antes de criar:
+
+```powershell
+# No DC01
+(Get-ADDomain).NetBIOSName      # ACME
+New-ADGroup -Name 'ACME$$$' -SamAccountName 'ACME$$$' -GroupScope DomainLocal -GroupCategory Security `
+    -Description "Necessario para migracao de SID History (Quest ODM)"
+Get-ADGroup 'ACME$$$' | Select-Object Name, GroupScope
+```
+
+O nome vai entre aspas simples. Com aspas duplas, o PowerShell tentaria ler `$$` como variável. O grupo fica vazio.
+
+![Grupo ACME$$$ criado como Domain Local](docs/img/17-grupo-acme-sss.png)
+
+#### 2. `TcpipClientSupport` no PDC da Acme
+
+```powershell
+# No DC01
+New-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\LSA" -Name "TcpipClientSupport" -PropertyType DWord -Value 1 -Force
+Get-ItemProperty "HKLM:\System\CurrentControlSet\Control\LSA" -Name TcpipClientSupport
+Restart-Computer
+```
+
+Na primeira tentativa o comando chegou com `]` no lugar de `\` e `Ç` no lugar de `:`, de novo por causa do teclado ABNT2 da VM. Troquei o layout para US e repeti. Também foi aqui que percebi o relógio do DC01 três dias atrasado ([problema 8](#problema-8-o-dc01-voltou-três-dias-atrasado)), e só reiniciei depois de corrigir.
+
+#### 3. Auditoria por GPO
+
+Num DC, a auditoria vai na política dos controladores de domínio. Configurada direto na máquina, ela pode ser sobrescrita pela GPO na próxima atualização.
+
+Em *Group Policy Management > Forest > Domains > `<domínio>` > Domain Controllers > Default Domain Controllers Policy > Edit*, no caminho *Computer Configuration > Policies > Windows Settings > Security Settings > Local Policies > Audit Policy*:
+
+| Política | Configuração |
+|---|---|
+| Audit account management | Success, Failure |
+| Audit directory service access | Success, Failure |
+
+| Audit account management | Audit directory service access |
+|---|---|
+| ![Audit account management](docs/img/20-auditoria-account-management.png) | ![Audit directory service access](docs/img/21-auditoria-ds-access.png) |
+
+Fiz o mesmo na `Default Domain Controllers Policy` do `nexus.lab`. Depois, em cada DC:
+
+```powershell
+gpupdate /force
+auditpol /get /category:"Account Management","DS Access"   # Success and Failure
+```
+
+> [!NOTE]
+> Na lista da GPO, os nomes aparecem cortados e o primeiro item é *Audit account **logon** events*, que é outra política. Acabei marcando ela também. Não atrapalha: o DC só registra também os eventos de autenticação.
+
+#### Próximos passos desta fase
+
+- Criar a trust entre `acme.lab` e `nexus.lab` (os encaminhadores condicionais de DNS já existem) e liberar o SID History nela.
+- Colocar a conta do destino no grupo Administrators do PDC da Acme.
+- Criar uma pasta compartilhada na Acme com permissão para um usuário de teste.
+- Conferir se a conta `svc-odm@acme.lab` ficou gravada no agente da Nexus.
 
 ---
 
@@ -832,6 +932,42 @@ Depois do reparo, liguei as VMs e rodei dentro delas o `chkdsk C: /scan` e o `Te
 
 ---
 
+### Problema 8: o DC01 voltou três dias atrasado
+
+| | |
+|---|---|
+| **Sintoma** | O relógio do `DC01-Acme` mostrava 20/11, 6:04, quando já era 23/11, 11:45. O `w32tm /query /status` mostrava *Leap Indicator: 3 (not synchronized)* e a última sincronização em 20/11. O `w32tm /resync /force` respondia *"The computer did not resync because the required time change was too big"*. |
+| **Causa** | A VM ficou parada (provavelmente suspensa) e voltou com o relógio de quando parou. O Windows tem uma trava que impede um DC de pular o relógio por uma diferença grande de uma vez, para que um NTP errado não bagunce o domínio. Além disso, a fonte era o `time.windows.com`, e não o `ntp.br` configurado na Fase 1. |
+| **Impacto** | O DC01 é a fonte de horário da floresta Acme. Com mais de 5 minutos de diferença, o Kerberos falha e leva junto agentes, sincronização e logins. |
+
+![w32tm recusando a correção](docs/img/18-w32tm-recusou.png)
+
+**Solução:**
+
+```powershell
+# 1. Data e hora manualmente, perto do horário real
+Set-Date -Date "2026-11-23 11:50:00"
+
+# 2. Fonte NTP de novo e sincronização
+w32tm /config /manualpeerlist:"a.st1.ntp.br,0x8 b.st1.ntp.br,0x8" /syncfromflags:manual /reliable:yes /update
+Restart-Service w32time
+w32tm /resync /rediscover
+
+# 3. Teste de comunicação com os servidores NTP
+w32tm /stripchart /computer:a.st1.ntp.br /samples:3 /dataonly
+w32tm /stripchart /computer:time.windows.com /samples:3 /dataonly
+```
+
+Logo depois do ajuste, o DC ficou alguns minutos em *Local CMOS Clock* com os peers em *Pending*. O `stripchart` mostrou que os dois servidores respondiam, com 0,27 segundo de diferença, então era só o primeiro contato que ainda não tinha acontecido. Depois disso, o `w32tm /query /status` passou a mostrar o `ntp.br` como fonte:
+
+![DC01 sincronizado com o ntp.br](docs/img/19-w32tm-ntpbr.png)
+
+O `,0x8` no `manualpeerlist` faz o Windows usar o modo cliente do NTP, que funciona melhor com servidores públicos.
+
+**Prevenção:** desligar as VMs em vez de suspender, ou conferir o relógio dos DCs antes de qualquer trabalho depois de retomar uma VM suspensa.
+
+---
+
 ## Lições aprendidas
 
 1. **A ordem de instalação faz parte da arquitetura.** O primeiro Entra Connect grava o atributo no AD e o segundo só lê. Se a ordem muda, ou se o segundo servidor escolhe o anchor sozinho, o match se perde.
@@ -848,6 +984,8 @@ Depois do reparo, liguei as VMs e rodei dentro delas o `chkdsk C: /scan` e o `Te
 12. **Disco "needs repair" tem conserto.** Antes de apagar e recriar uma VM, vale um backup da pasta e um `vmware-vdiskmanager -R`. Levou poucos minutos e salvou as duas VMs.
 13. **O agente do Directory Sync usa duas contas diferentes.** Uma para ler e gravar no AD (`svc-odm`) e outra para rodar o serviço do Windows (System Account). Misturar as duas é fácil quando se lê o instalador com pressa.
 14. **Algumas telas do instalador preparam funções futuras.** Passphrase e conta de SID History não ligam nada na hora, mas deixar em branco pode exigir reconfigurar o agente depois.
+15. **VM suspensa volta com o relógio parado.** Num DC, isso é grave, e o Windows nem deixa corrigir uma diferença grande com o `w32tm`. Agora confiro o relógio dos DCs sempre que retomo o lab.
+16. **`$` em nome de objeto vai entre aspas simples no PowerShell.** Com aspas duplas, `ACME$$$` seria interpretado como variável.
 
 ---
 
@@ -918,7 +1056,8 @@ Os prints de antes e depois estão no [problema 5](#problema-5-as-regras-com-nul
 | Preparação das VMs do ODM (reparo de disco, hardware, conectividade) | Concluída |
 | Directory Sync: agentes nas duas florestas | Concluída |
 | ODM M365: tenants, contas, e-mail, OneDrive e Teams | Planejada |
-| SID History e migração AD para AD | Planejada |
+| SID History: pré-requisitos | Em andamento (faltam a trust e a pasta de teste) |
+| Migração AD para AD com SID History | Planejada |
 | ODM Active Directory: migração de estação | Planejada |
 
 O objetivo das próximas fases é praticar os três produtos do Quest On Demand que aparecem juntos num projeto real. A ordem vai do mais simples para o mais complexo, porque cada fase aproveita o que a anterior deixou pronto:
@@ -936,7 +1075,8 @@ Próximas ações:
 - [ ] Definir como o ODM vai casar as contas. No Tenant B as contas já existem, criadas pelo Entra Connect, então o ODM deve casar e não criar. O UPN do mesmo usuário é diferente em cada tenant (só a parte antes do `@` é igual), então o match não pode ser pelo UPN completo.
 - [ ] Migrar e-mail, OneDrive e Teams de alguns usuários de teste e registrar os resultados aqui.
 - [ ] Conferir se a conta de SID History (`svc-odm@acme.lab`) ficou gravada no agente da Nexus.
-- [ ] Preparar os pré-requisitos do SID History: grupo `ACME$$$` no `acme.lab`, auditoria nos dois domínios, `TcpipClientSupport` no PDC da Acme e trust entre as florestas.
+- [ ] Criar a trust entre as florestas e liberar o SID History nela.
+- [ ] Colocar a conta do destino no grupo Administrators do PDC da Acme e criar a pasta de teste.
 - [ ] Instalar o filtro de senha nos DCs e testar a sincronização de senha.
 - [ ] Criar uma VM Windows 10 ou 11 no `nexus.lab` para a fase do ODM Active Directory.
 
