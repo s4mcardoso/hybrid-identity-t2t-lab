@@ -546,7 +546,7 @@ Get-AuthenticodeSignature "$env:USERPROFILE\Downloads\ODMAD_DS_Agent.exe" | Form
 | Job Concurrency | Automatic | Automatic | Poucos objetos e um agente por floresta. Só mexeria com fila de jobs ou carga nos DCs |
 | Service Credential | Run as System Account | Run as System Account | É a conta do serviço do Windows na própria VM. O acesso ao AD continua sendo pela `svc-odm` |
 | Passphrase for Password Sync | Definida | A mesma da Acme | Segredo combinado entre o agente e o filtro de senha que vai nos DCs |
-| SID History Migration | Em branco | `acme.lab` e `svc-odm@acme.lab` | A Nexus é o destino da migração AD para AD, então o agente dela precisa de acesso à origem |
+| SID History Migration | Em branco | Em branco | Essa conta só é necessária para migrar SID History **sem** trust. Com trust entre as florestas, o acesso à origem vem pela própria trust (ver [Fase 9](#fase-9-pré-requisitos-do-sid-history)) |
 
 Algumas telas do instalador:
 
@@ -558,7 +558,7 @@ Algumas telas do instalador:
 |---|---|
 | ![Tela Service Credential](docs/img/12-agente-service-credential.png) | ![Tela da passphrase](docs/img/13-agente-passphrase.png) |
 
-SID History no agente da Nexus, com a conta da origem:
+Tela de SID History. No agente da Nexus cheguei a preencher a conta da Acme, mas avancei sem clicar em *Add Account*:
 
 ![Tela SID History Migration no agente da Nexus](docs/img/14-agente-sid-history.png)
 
@@ -566,8 +566,20 @@ SID History no agente da Nexus, com a conta da origem:
 
 **O SID History.** Cada conta do AD tem um SID, e as permissões de arquivos e pastas apontam para ele. Ao migrar um usuário para outra floresta, a conta nova ganha outro SID e perderia o acesso aos recursos antigos. O SID History faz a conta nova carregar o SID antigo. Escolhi a direção `acme.lab` (origem) para `nexus.lab` (destino), o que encaixa no cenário: funcionários da Acme que passam para a Nexus na separação.
 
-> [!WARNING]
-> Não tenho certeza se a conta de SID History ficou gravada no agente da Nexus: terminei a instalação sem conferir se a linha apareceu depois do *Add Account*. Vou conferir antes de configurar o SID History. Se faltar, rodo a configuração do agente de novo.
+> [!NOTE]
+> Depois fui conferir se a conta tinha sido gravada. A ferramenta `ReconfigHelper.exe`, na pasta `bin` do agente, só troca a conta principal (domínio, GC, usuário e senha), sem a tela de SID History. No registro, em `HKLM\SOFTWARE\Quest\On Demand Migration For Active Directory\ODMAD_DS\Agent0`, o valor `SIDSource` estava vazio, enquanto a conta principal estava lá com a senha criptografada.
+>
+> Relendo a tela do instalador, ela diz que a conta só é necessária para migrar SID History sem trust: *"If you aren't planning to migrate SID history or plan to use an AD trust, click Next"*. Como o lab passou a ter trust entre as florestas, o `SIDSource` vazio é o esperado. O acesso à origem vem pela `NEXUS\svc-odm`, que está no grupo Administrators da Acme.
+
+Para ver os valores do agente sem expor senha nem chave, listei só o nome e o tamanho de cada um:
+
+```powershell
+$k = 'HKLM:\SOFTWARE\Quest\On Demand Migration For Active Directory\ODMAD_DS\Agent0'
+(Get-Item $k).GetValueNames() | ForEach-Object {
+    $v = (Get-ItemProperty $k).$_
+    [pscustomobject]@{ Nome = $_; Tamanho = ("$v").Length }
+} | Sort-Object Nome | Format-Table -AutoSize
+```
 
 #### 5. Conferência
 
@@ -765,7 +777,6 @@ O SID do `teste.acme1` na Acme é `S-1-5-21-2792967527-818994920-2376679453-1604
 
 #### Próximos passos desta fase
 
-- Conferir se a conta `svc-odm@acme.lab` ficou gravada no agente da Nexus.
 - Criar o workflow no Directory Sync para levar o `teste.acme1` da Acme para a Nexus com SID History.
 - Conferir o `sIDHistory` da conta nova e testar o acesso a `\\DC01-ACME\Financeiro` com ela.
 
@@ -1091,6 +1102,7 @@ O `,0x8` no `manualpeerlist` faz o Windows usar o modo cliente do NTP, que funci
 16. **`$` em nome de objeto vai entre aspas simples no PowerShell.** Com aspas duplas, `ACME$$$` seria interpretado como variável.
 17. **Trust de floresta filtra SID por padrão.** Sem o `/enablesidhistory:yes` no lado que confia, o SID antigo seria descartado e o teste falharia mesmo com o `sIDHistory` preenchido.
 18. **`nltest /sc_query` diz mais que o `netdom /verify`.** O `netdom` falhou sem motivo; o `nltest` mostrou na hora que o canal da trust estava OK.
+19. **Ler a tela do instalador até o fim.** A conta de SID History parecia obrigatória, mas o próprio texto da tela dizia que, com trust, ela não é necessária.
 
 ---
 
@@ -1180,7 +1192,6 @@ Próximas ações:
 - [ ] Rodar o Discovery de contas e grupos.
 - [ ] Definir como o ODM vai casar as contas. No Tenant B as contas já existem, criadas pelo Entra Connect, então o ODM deve casar e não criar. O UPN do mesmo usuário é diferente em cada tenant (só a parte antes do `@` é igual), então o match não pode ser pelo UPN completo.
 - [ ] Migrar e-mail, OneDrive e Teams de alguns usuários de teste e registrar os resultados aqui.
-- [ ] Conferir se a conta de SID History (`svc-odm@acme.lab`) ficou gravada no agente da Nexus.
 - [ ] Migrar o `teste.acme1` da Acme para a Nexus com SID History e testar o acesso à pasta `Financeiro`.
 - [ ] Instalar o filtro de senha nos DCs e testar a sincronização de senha.
 - [ ] Criar uma VM Windows 10 ou 11 no `nexus.lab` para a fase do ODM Active Directory.
