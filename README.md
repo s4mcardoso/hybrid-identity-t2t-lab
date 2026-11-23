@@ -20,7 +20,7 @@ Projeto de estudo pessoal. Montei do zero um ambiente com duas florestas Active 
 |---|---|
 | **O que montei** | 6 servidores Windows Server 2022, 2 florestas Active Directory e 2 tenants Microsoft 365, simulando a separação de uma empresa de um grupo. |
 | **O problema** | Sincronizar a mesma floresta para dois tenants ao mesmo tempo, com o mesmo identificador para cada usuário nos dois lados. Sem isso, a migração gera contas duplicadas. |
-| **Resultado** | Os 10 usuários da Nexus com o mesmo `immutableId` nos dois tenants, conferido por script, regras de sincronização próprias e sete problemas resolvidos e documentados. |
+| **Resultado** | Os 10 usuários da Nexus com o mesmo `immutableId` nos dois tenants, conferido por script, regras de sincronização próprias, sete problemas resolvidos e documentados e os agentes do Quest Directory Sync conectados nas duas florestas. |
 
 ---
 
@@ -68,6 +68,7 @@ O que eu queria aprender:
 | Kerberos e horário | Falha de autenticação causada por diferença de relógio | [Problema 3](#problema-3-o-ms-ds-consistencyguid-não-é-gravado-no-ad) |
 | Regras de sincronização | Regras outbound no Synchronization Rules Editor com expressões e `AuthoritativeNull` | [Fase 5](#fase-5-regras-de-transformação-customizadas) |
 | PowerShell | Scripts de conferência no AD, no ADSync e no Microsoft Graph | [Validação](#validação) |
+| Quest On Demand | Ambientes locais e agentes do Directory Sync nas duas florestas, conta de serviço, passphrase de sincronização de senha e conta para SID History | [Fase 8](#fase-8-agentes-do-quest-directory-sync) |
 | Virtualização | 6 VMs no VMware Workstation, reparo de disco virtual, dimensionamento de RAM e CPU e snapshots automatizados com `vmrun` | [Fase 7](#fase-7-preparação-das-vms-do-quest-odm) |
 
 ---
@@ -475,12 +476,95 @@ $vms | Where-Object FullName -match 'ODMAD' | ForEach-Object { & $vmrun -T ws st
 |---|---|---|
 | `02 - Sync validado, antes do ODM` | As 6 | Sincronização validada, 10 de 10 IDs iguais |
 | `03 - ODMAD reparada, 6GB-4vCPU, antes do agente` | As duas `SRV-ODMAD` | Discos reparados e hardware ajustado |
+| `04 - Agentes Directory Sync instalados` | As duas `SRV-ODMAD` | Agentes instalados e conectados (ver Fase 8) |
 
 > [!TIP]
 > Com a VM ligada, o snapshot salva também a memória. O das `SRV-ODMAD`, com 6 GB, levou uns 8 minutos, e o `vmrun` não mostra progresso nem devolveu o prompt no final. Para saber se estava andando, olhei os arquivos da pasta da VM: quando o `.vmem` do snapshot chegou a 6144 MB e o `.vmsn` foi gravado, o snapshot já estava pronto. Com a VM desligada, leva segundos.
 
 > [!WARNING]
 > Para voltar um snapshot, volto todas as VMs juntas para o mesmo ponto. Voltar só um DC ou só um servidor do Entra Connect deixa as máquinas fora de sincronia entre si (no AD, isso pode causar USN rollback). E os tenants não voltam junto: o que já foi para a nuvem continua lá.
+
+---
+
+### Fase 8: Agentes do Quest Directory Sync
+
+**Objetivo:** conectar as duas florestas ao Quest On Demand, com um agente do Directory Sync em cada uma. Esses agentes são a base do Directory Sync e da migração de AD.
+
+> [!NOTE]
+> Nem toda parte do ODM usa agente. A migração de e-mail, OneDrive e Teams (em *Migrate > Projects*) roda na nuvem. O agente local entra quando o ODM precisa ler ou gravar no AD: Directory Sync, sincronização de senha, SID History e migração de computadores.
+
+#### 1. Conta de serviço em cada floresta
+
+Criei uma conta só para o agente em cada domínio, em vez de usar o Administrator. Rodei no DC de cada floresta, porque o módulo `ActiveDirectory` não existe nos servidores membros:
+
+```powershell
+# No DC01-Acme (no DC02-Nexus, trocar o UPN para svc-odm@nexus.lab)
+$senha = Read-Host "Senha da svc-odm" -AsSecureString
+New-ADUser -Name "svc-odm" -SamAccountName "svc-odm" -UserPrincipalName "svc-odm@acme.lab" `
+    -AccountPassword $senha -Enabled $true -PasswordNeverExpires $true `
+    -Description "Agente Directory Sync do Quest ODM"
+Add-ADGroupMember "Domain Admins" -Members "svc-odm"
+
+# Conferência
+Get-ADUser svc-odm -Properties MemberOf | Select-Object UserPrincipalName, Enabled, MemberOf
+```
+
+A conta ficou no Domain Admins porque a sincronização de senha da Quest exige isso. Em produção eu começaria com o mínimo de permissão e só subiria se alguma função pedisse.
+
+#### 2. Ambientes locais no portal
+
+Em *Migrate > Directory Sync*, menu *Settings > Environments > New > Local*:
+
+| Ambiente | Agente | IP do DC |
+|---|---|---|
+| `Acme-AD` | `SRV-ODM-ACME` | 192.168.150.10 |
+| `Nexus-AD` | `SRV-ODMAD-NEXUS` | 192.168.150.20 |
+
+Ao salvar, o portal mostra a tela *Deploy a new agent*, com o botão de download, a **Registration URL** e a **Registration Key**. A chave liga o agente à organização no Quest On Demand, então tratei como senha: não aparece em nenhum print publicado.
+
+#### 3. Download do agente
+
+Baixei o instalador **dentro de cada `SRV-ODMAD`**, pelo navegador da própria VM. Assim a URL e a chave são copiadas e coladas no mesmo lugar, sem passar pelo console do VMware, que já tinha trocado símbolos por causa do teclado ABNT2 (ver [problema 6](#problema-6-o-connect-mggraph-não-funcionava-no-servidor)).
+
+O Edge barrou o `ODMAD_DS_Agent.exe` com o aviso do SmartScreen (*"isn't commonly downloaded"*, *Publisher: Unknown*). O arquivo vem do domínio oficial da Quest, pela página autenticada do portal, então liberei em *... > Keep > Keep anyway*. Antes de executar, vale conferir a assinatura:
+
+```powershell
+Get-AuthenticodeSignature "$env:USERPROFILE\Downloads\ODMAD_DS_Agent.exe" | Format-List Status, SignerCertificate
+```
+
+#### 4. Telas do instalador
+
+| Tela | `SRV-ODMAD-Acme` | `SRV-ODMAD-Nexus` | Por quê |
+|---|---|---|---|
+| Register Agent | URL e chave do `Acme-AD`, sem proxy | URL e chave do `Nexus-AD`, sem proxy | As VMs saem direto para a internet na porta 443 |
+| Domain and Credentials | `acme.lab`, GC `DC01-ACME.acme.lab`, `svc-odm@acme.lab` | `nexus.lab`, GC `DC02-NEXUS.nexus.lab`, `svc-odm@nexus.lab` | Conta que o agente usa para ler e gravar no AD. O nome do GC saiu do `nltest /dsgetdc` |
+| Job Concurrency | Automatic | Automatic | Poucos objetos e um agente por floresta. Só mexeria com fila de jobs ou carga nos DCs |
+| Service Credential | Run as System Account | Run as System Account | É a conta do serviço do Windows na própria VM. O acesso ao AD continua sendo pela `svc-odm` |
+| Passphrase for Password Sync | Definida | A mesma da Acme | Segredo combinado entre o agente e o filtro de senha que vai nos DCs |
+| SID History Migration | Em branco | `acme.lab` e `svc-odm@acme.lab` | A Nexus é o destino da migração AD para AD, então o agente dela precisa de acesso à origem |
+
+**A passphrase.** A sincronização de senha moderna da Quest instala um filtro de senha no LSASS dos DCs. Quando o usuário troca a senha, o filtro captura a senha nova e entrega para o agente, que replica para o outro ambiente. A passphrase serve para o agente só aceitar mensagens desse filtro. Por isso ela é definida agora, no agente, e digitada de novo quando o filtro for instalado. Preencher o campo não liga nada: a sincronização de senha só começa quando o filtro for instalado e a função for configurada no portal.
+
+**O SID History.** Cada conta do AD tem um SID, e as permissões de arquivos e pastas apontam para ele. Ao migrar um usuário para outra floresta, a conta nova ganha outro SID e perderia o acesso aos recursos antigos. O SID History faz a conta nova carregar o SID antigo. Escolhi a direção `acme.lab` (origem) para `nexus.lab` (destino), o que encaixa no cenário: funcionários da Acme que passam para a Nexus na separação.
+
+> [!WARNING]
+> Não tenho certeza se a conta de SID History ficou gravada no agente da Nexus: terminei a instalação sem conferir se a linha apareceu depois do *Add Account*. Vou conferir antes de configurar o SID History. Se faltar, rodo a configuração do agente de novo.
+
+#### 5. Conferência
+
+```powershell
+# Em cada SRV-ODMAD
+Get-Service ODMDirectorySync | Select-Object Status, StartType   # Running / Automatic
+```
+
+No portal, em *Environments*, os dois ambientes ficaram com **Agents: OK** e **Discovery: Discovered**:
+
+![Ambientes do Directory Sync com os dois agentes OK](docs/img/09-directory-sync-environments.png)
+
+O Discovery roda sozinho a cada 24 horas a partir da primeira leitura. Depois de mudar algo no AD, o botão **DISCOVER** força uma leitura na hora.
+
+> [!TIP]
+> O horário da última leitura da Acme aparecia como 4:00 no navegador da `SRV-ODMAD-Acme` e como 9:00 no da `SRV-ODMAD-Nexus`. Era o mesmo horário mostrado em fusos diferentes: a `SRV-ODMAD-Acme` estava no fuso do Pacífico, herdado do template. A correção é `tzutil /s "E. South America Standard Time"` seguido de `w32tm /resync /force`.
 
 ---
 
@@ -762,6 +846,8 @@ Depois do reparo, liguei as VMs e rodei dentro delas o `chkdsk C: /scan` e o `Te
 10. **Base64 diferencia maiúsculas de minúsculas.** Ao copiar um ID de um print, eu tinha trocado um `I` maiúsculo por um `l` minúsculo. No olho parece igual, mas é outro valor. Por isso a comparação final usa `-ceq`.
 11. **Medir o host antes de dar memória para as VMs.** O notebook sozinho usava uns 19 GB. Sem conferir isso, eu teria colocado 8 GB em cada VM e travado tudo.
 12. **Disco "needs repair" tem conserto.** Antes de apagar e recriar uma VM, vale um backup da pasta e um `vmware-vdiskmanager -R`. Levou poucos minutos e salvou as duas VMs.
+13. **O agente do Directory Sync usa duas contas diferentes.** Uma para ler e gravar no AD (`svc-odm`) e outra para rodar o serviço do Windows (System Account). Misturar as duas é fácil quando se lê o instalador com pressa.
+14. **Algumas telas do instalador preparam funções futuras.** Passphrase e conta de SID History não ligam nada na hora, mas deixar em branco pode exigir reconfigurar o agente depois.
 
 ---
 
@@ -830,8 +916,9 @@ Os prints de antes e depois estão no [problema 5](#problema-5-as-regras-com-nul
 | Regras de transformação | Concluída |
 | Conferência do `immutableId` entre os tenants | Concluída (10 de 10) |
 | Preparação das VMs do ODM (reparo de disco, hardware, conectividade) | Concluída |
-| ODM M365: tenants, contas, e-mail, OneDrive e Teams | Próxima etapa |
-| Directory Sync: agentes nas duas florestas | Planejada |
+| Directory Sync: agentes nas duas florestas | Concluída |
+| ODM M365: tenants, contas, e-mail, OneDrive e Teams | Planejada |
+| SID History e migração AD para AD | Planejada |
 | ODM Active Directory: migração de estação | Planejada |
 
 O objetivo das próximas fases é praticar os três produtos do Quest On Demand que aparecem juntos num projeto real. A ordem vai do mais simples para o mais complexo, porque cada fase aproveita o que a anterior deixou pronto:
@@ -848,7 +935,9 @@ Próximas ações:
 - [ ] Rodar o Discovery de contas e grupos.
 - [ ] Definir como o ODM vai casar as contas. No Tenant B as contas já existem, criadas pelo Entra Connect, então o ODM deve casar e não criar. O UPN do mesmo usuário é diferente em cada tenant (só a parte antes do `@` é igual), então o match não pode ser pelo UPN completo.
 - [ ] Migrar e-mail, OneDrive e Teams de alguns usuários de teste e registrar os resultados aqui.
-- [ ] Instalar os agentes do Directory Sync no `SRV-ODMAD-Acme` e no `SRV-ODMAD-Nexus`.
+- [ ] Conferir se a conta de SID History (`svc-odm@acme.lab`) ficou gravada no agente da Nexus.
+- [ ] Preparar os pré-requisitos do SID History: grupo `ACME$$$` no `acme.lab`, auditoria nos dois domínios, `TcpipClientSupport` no PDC da Acme e trust entre as florestas.
+- [ ] Instalar o filtro de senha nos DCs e testar a sincronização de senha.
 - [ ] Criar uma VM Windows 10 ou 11 no `nexus.lab` para a fase do ODM Active Directory.
 
 ---
