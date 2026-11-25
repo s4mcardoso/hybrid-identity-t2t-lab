@@ -173,6 +173,16 @@ Um contato é um cartão de visita dentro do AD: nome, e-mail, telefone e empres
 
 Para lembrar: usuário é funcionário (tem crachá), contato é visitante na agenda (só nome e telefone).
 
+O contato não serve para liberar envio de e-mail. No e-mail da empresa dá para mandar para qualquer endereço, igual ao pessoal. A diferença está na **lista de endereços da empresa**, a GAL (*Global Address List*): é como a lista de ramais, mantida pelo TI e igual para todo mundo. Os usuários aparecem nela automaticamente, e o contato é o jeito de colocar alguém de fora nessa lista oficial.
+
+Na prática, serve para:
+
+- **Todo mundo achar a mesma pessoa** sem cada um salvar na própria agenda (por exemplo, o fiscal do escritório de contabilidade).
+- **Colocar gente de fora em grupos de e-mail.** Um grupo só aceita membros que existem no AD, então os engenheiros da construtora parceira entram no `projeto-obra@empresa.com` como contatos.
+- **Fazer duas empresas se enxergarem na migração** (GAL sync): as pessoas da Acme aparecem como contatos na lista da Nexus durante a coexistência.
+
+Para lembrar: contato do AD não é sobre poder mandar e-mail, é sobre aparecer na lista de ramais da empresa. Agenda pessoal só você vê; a GAL a empresa inteira vê.
+
 ### Create new contacts as
 
 | Opção | O que faz | Quando usar |
