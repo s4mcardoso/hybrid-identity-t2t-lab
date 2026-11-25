@@ -365,3 +365,19 @@ Mantive os mapeamentos padrão, como recomenda o guia de SID History da Quest.
 
 ---
 
+## Resumo do template
+
+![Resumo do template](img/33-template-resumo.png)
+
+| Seção | Configuração no laboratório |
+|---|---|
+| Source / Target | Local / Local |
+| Users | AS-IS, atualiza criados, atualiza casados, targetAddress OVERWRITE ONCE |
+| Groups | AS-IS, atualiza criados e casados, escopos mantidos |
+| Contacts | AS-IS, atualiza criados e casados |
+| Devices | Não cria nem atualiza (SKIP) |
+| Passwords | Senha padrão definida |
+| Miscellaneous | SID History sincronizado, mailboxes não atualizadas |
+| Mappings | 156 mapeamentos padrão |
+
+O template só é salvo no Finish. Depois de salvo, cada seção tem um botão Edit para ajustar sem refazer tudo.
