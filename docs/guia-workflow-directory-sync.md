@@ -229,4 +229,46 @@ Para lembrar: Read From é quem eu leio, Write To é quem eu mexo. Numa migraç�
 
 ---
 
+## 5. Aba General
+
+![Aba General do workflow](img/48-workflow-general.png)
+
+| Opção | O que faz | Quando usar |
+|---|---|---|
+| **Test Mode** | Roda o workflow inteiro (lê, compara, monta) mas não grava nada no destino. No fim mostra o que teria sido criado, alterado ou ignorado | Sempre na primeira execução de um workflow novo, e depois de mexer em mapeamentos, filtros ou escopo |
+| **Skip Scripts** | Dentro do Test Mode, pula as etapas de Run PowerShell | Deixar marcado. Um script não sabe que está em teste e pode mudar algo de verdade |
+| **Only evaluate objects which have changed since the last read** | Só avalia os objetos que mudaram desde a última leitura (delta) | Em coexistência, com o workflow rodando em agenda e muitos objetos. Na primeira carga e em testes, deixar desmarcado para avaliar tudo |
+
+Para lembrar: Test Mode é o ensaio geral do teatro. Tudo acontece, menos a cortina abrir. Skip Scripts é tirar os efeitos pirotécnicos do ensaio, porque fogo de ensaio queima do mesmo jeito.
+
+O delta é como conferir só as mensagens novas do grupo em vez de reler a conversa toda. Mais rápido, mas se alguma coisa escapou lá atrás ele não volta para pegar. Por isso, quando algo parece não sincronizar, a primeira coisa a fazer é rodar uma vez sem o delta.
+
+No lab: primeira execução com Test Mode ligado e Skip Scripts marcado. Depois de conferir o resultado, Test Mode desligado para a execução real. Delta desligado.
+
+---
+
+## 6. Aba Schedule
+
+![Aba Schedule do workflow](img/49-workflow-schedule.png)
+
+| Opção | O que faz | Quando usar |
+|---|---|---|
+| **Manually** | Só roda quando alguém clica em RUN | Migração em lotes, testes e qualquer workflow que grava algo que precisa de conferência antes |
+| **At specific intervals** | Roda a cada X minutos, horas ou dias (mínimo 15 minutos) | Coexistência: manter GAL, grupos e atributos alinhados enquanto as duas empresas convivem |
+| **At specific times** | Roda em dias e horários definidos | Cargas pesadas fora do horário comercial, ou uma sincronização por noite antes da janela de migração |
+
+Para lembrar: Manually é o motorista particular, só sai quando você chama. Intervals é o ônibus que passa de 15 em 15 minutos. Specific times é o voo, com dia e hora marcados.
+
+No dia a dia de projeto o mais comum é ter os dois tipos ao mesmo tempo: um workflow de coexistência em intervalo, rodando sozinho, e workflows de migração em Manually, disparados lote por lote.
+
+No lab: Manually.
+
+---
+
+## 7. Aba Alerts
+
+Envia e-mail quando o workflow falha ou termina com erros. Em produção vale configurar, porque um workflow agendado pode falhar de madrugada sem ninguém ver. No lab ficou sem alertas, já que a execução é manual e acompanhada.
+
+---
+
 *A execução e o resultado do workflow vão entrando aqui.*
