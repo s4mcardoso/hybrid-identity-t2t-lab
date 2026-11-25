@@ -159,4 +159,74 @@ Como nenhum desses atributos do `teste.acme1` existe na Nexus, o esperado é nã
 
 ---
 
-*As etapas Stage Data e Write To vão entrando aqui conforme eu configuro o workflow.*
+## 3. Stage Data
+
+É a etapa que aplica o template aos objetos do escopo e decide o que vai ser criado ou atualizado. Ela é configurada por um assistente de várias telas.
+
+### Invalid Mappings
+
+![Invalid Mappings](img/44-workflow-invalid-mappings.png)
+
+A primeira tela listou 67 mapeamentos inválidos: `altRecipient`, `authOrig`, `dLMemRejectPerms`, `extensionAttribute1` a `15` e outros. São todos atributos do Exchange. Eles só existem no AD depois da extensão de schema que o Exchange faz, e o lab não tem isso. A Quest ignora esses mapeamentos sem afetar o workflow.
+
+Para lembrar: o schema é o modelo da ficha de cadastro do AD, e o Exchange imprime uma ficha nova com mais campos. A tela diz que esses campos existem na receita, mas não na minha cozinha.
+
+No lab, ignorei. Em produção, essa tela merece atenção:
+
+- origem com Exchange e destino sem: atributos como os `extensionAttribute`, que muitas empresas usam para centro de custo ou matrícula, não têm para onde ir;
+- um atributo importante na lista pode indicar que o schema do destino ainda precisa ser preparado.
+
+Servidor Exchange completo no lab não vale a pena para o meu foco (migração de nuvem para nuvem). Estender só o schema, sem instalar o servidor, é uma boa fase extra depois: deixa o lab parecido com os clientes e permite praticar mapeamentos de e-mail. Alteração de schema não tem volta, e depois dela o Entra Connect precisa atualizar o schema do diretório no assistente.
+
+### Target domain
+
+![Domínio de destino](img/45-workflow-target-domain.png)
+
+Em qual domínio as contas nascem. Numa floresta com vários domínios dá para escolher; no lab só existe o `nexus.lab`.
+
+A coluna DomainSid mostra como um SID é montado:
+
+```
+S-1-5-21-2792967527-818994920-2376679453  -  1604
+└──────────── SID do domínio ────────────┘   └RID┘
+```
+
+O SID do domínio é igual para todo mundo do domínio, e o RID é o número da conta. A conta criada na Nexus ganha um SID com o "sobrenome" da Nexus e um RID novo; o SID antigo inteiro, com o "sobrenome" da Acme, vai para o `sIDHistory`.
+
+Para lembrar: quem muda de domínio ganha sobrenome novo, e o `sIDHistory` guarda o nome de solteiro.
+
+### OUs de origem
+
+Escolhi a `Migrar-Nexus`. A lista vinha vazia até eu adicionar OUs ao escopo dos ambientes (ver o [guia dos ambientes](guia-ambientes-directory-sync.md#organizational-units)).
+
+### OU de destino e opções
+
+![OU de destino](img/46-workflow-target-ou.png)
+
+Dá para mandar usuários, grupos, contatos e devices para OUs diferentes, o que ajuda quando o destino organiza o AD por tipo, com GPOs e delegação próprias. No lab usei a `Migrados-Acme` para todos.
+
+| Opção | O que faz | Quando usar |
+|---|---|---|
+| **Sync all objects to a default container** | Tudo direto na OU de destino, sem subpastas | Quando a estrutura da origem não importa no destino ou vai ser reorganizada |
+| **Recreate source OU hierarchy in the default OU** | Recria a estrutura de OUs da origem dentro da OU de destino | Quando a estrutura da origem tem significado (departamento, filial, país) com GPOs ou delegação ligadas a ela |
+| **Protect new OUs from deletion** | Liga a proteção contra exclusão acidental nas OUs criadas | Sim em produção, quando a hierarquia é recriada |
+
+Para lembrar: default container é jogar tudo numa caixa só; recreate hierarchy é levar a estante inteira com as gavetas no mesmo lugar.
+
+No lab: default container e proteção desligada, porque nenhuma OU nova é criada.
+
+### Resumo
+
+![Resumo do Stage Data](img/47-workflow-stage-resumo.png)
+
+---
+
+## 4. Write To
+
+Marquei só o Nexus-AD. É o único lugar onde o workflow grava. A Acme é só lida no Read From; marcá-la aqui autorizaria o workflow a mexer na origem.
+
+Para lembrar: Read From é quem eu leio, Write To é quem eu mexo. Numa migração one-way, só o destino é mexido.
+
+---
+
+*A execução e o resultado do workflow vão entrando aqui.*
