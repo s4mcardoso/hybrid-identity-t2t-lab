@@ -60,8 +60,36 @@ O escopo do ambiente: quais partes do AD ele enxerga. Sem nenhuma OU aqui, o wor
 
 Para lembrar: o ambiente é a janela pela qual o Directory Sync olha o AD.
 
-- **Na origem**, o escopo diz quem vai migrar. Quanto menor, mais controle. No lab: só a `Migrar-Nexus`.
-- **No destino**, o escopo diz onde a etapa de Match procura quem já existe. Precisa ser largo o bastante para não criar conta duplicada.
+### Por que cada ambiente tem um escopo diferente
+
+Para copiar o `teste.acme1` da Acme para a Nexus, a ferramenta precisa responder três perguntas, cada uma sobre um lugar diferente:
+
+| # | Pergunta | Onde olha | O que responde |
+|---|---|---|---|
+| 1 | Quem eu copio? | Acme | Escopo do Acme-AD: `Migrar-Nexus` |
+| 2 | Essa pessoa já existe na Nexus? | Nexus, onde moram as pessoas de lá | Escopo do Nexus-AD: `CN=Users` |
+| 3 | Se não existe, onde eu crio? | Nexus, num lugar separado | Escopo do Nexus-AD: `Migrados-Acme` |
+
+Na vida real seria uma transferência de funcionários entre filiais. Na Acme, o RH pega a lista de quem vai ser transferido. Na Nexus, antes de fazer crachá novo, consulta a lista de funcionários para ver se a pessoa já trabalha lá. Se não trabalha, prepara uma mesa na sala de recém-chegados.
+
+```
+ACME                                  NEXUS
+┌──────────────────┐                 ┌───────────────────────────────┐
+│ Migrar-Nexus     │  1. quem vai?   │ Users                         │
+│  └ teste.acme1 ──┼────────────────►│  └ teste.nexus1...10          │
+└──────────────────┘                 │    2. ele já existe aqui? NÃO │
+                                     │                               │
+                                     │ Migrados-Acme                 │
+                                     │  └ teste.acme1 (novo)  ◄── 3. │
+                                     └───────────────────────────────┘
+```
+
+- **Na origem**, o escopo é a lista de passageiros: só embarca quem está nela. Quanto menor, mais controle. Se o `Users` da Acme entrasse, todo mundo de lá seria migrado.
+- **No destino**, o escopo é o mapa da cidade: precisa mostrar onde as pessoas já estão, para o Match não criar duplicata, e onde colocar quem chega.
+
+No lab, os dez `Teste Nexus` estavam no container `CN=Users` (é onde o AD coloca usuários criados sem escolher OU), então ele entrou no escopo do Nexus-AD junto com a `Migrados-Acme`. Não marquei a raiz `nexus.lab`, que traria também Computers, Domain Controllers e outros containers que não têm nada a ver com a migração. Menor escopo necessário.
+
+Para lembrar: na Acme eu escolho quem vai; na Nexus eu mostro onde as pessoas já estão e onde colocar quem chega.
 
 ---
 
