@@ -100,4 +100,67 @@ No lab essa opção não tem efeito, porque não existe Exchange local lendo o c
 
 ---
 
-*As próximas telas (Groups, Contacts, Devices, senha padrão, SID History e Mappings) vão entrando aqui conforme eu avanço no template.*
+## Groups
+
+![Tela de Groups do template](img/27-template-groups.png)
+
+### Base: tipo e escopo de grupo
+
+Todo grupo do AD tem um tipo e um escopo.
+
+| Tipo | Para que serve |
+|---|---|
+| **Security** | Dar permissão em pastas, impressoras e sistemas. Também pode receber e-mail |
+| **Distribution** | Só e-mail. Não serve para permissão |
+
+| Escopo | Quem pode ser membro | Onde pode receber permissão |
+|---|---|---|
+| **Global** | Só contas do mesmo domínio | Em qualquer domínio que confie nele |
+| **Domain Local** | Contas de qualquer lugar, inclusive de outra floresta via trust | Só no próprio domínio |
+| **Universal** | Contas de qualquer domínio da mesma floresta | Em qualquer domínio da floresta |
+
+A regra clássica da Microsoft para organizar isso é a **AGDLP**: as contas (**A**ccount) entram num grupo **G**lobal, que organiza as pessoas. O Global entra num **D**omain **L**ocal, que representa o recurso. O Domain Local recebe a **P**ermissão.
+
+Numa migração entre florestas, só o Domain Local aceita membros da outra floresta. Foi por isso que consegui colocar o `NEXUS\svc-odm` no grupo Administrators da Acme: o Administrators é Domain Local.
+
+Para lembrar: Global é bairrista (só gente do próprio domínio). Domain Local é hospitaleiro (aceita gente de fora, mas só trabalha em casa). Universal é da cidade inteira (circula pela floresta, mas não aceita estrangeiro).
+
+### Create groups as: como o grupo nasce no destino
+
+| Opção | O que faz | Quando usar |
+|---|---|---|
+| **AS-IS** | Mantém o tipo. Security continua Security, Distribution continua Distribution | Migração normal, quando os grupos vão continuar dando permissão no destino |
+| **DISTRIBUTION GROUPS** | Cria tudo como distribuição, mesmo que na origem seja segurança | Quando o destino só precisa dos grupos para e-mail e não deve herdar nenhuma permissão por engano |
+| **CONTACTS** | Cria o grupo como contato na lista de endereços | GAL sync: o grupo só precisa aparecer na lista para receber e-mail |
+| **SKIP** | Não cria grupos | Workflow só de usuários, ou grupos recriados de outra forma |
+
+Para lembrar: AS-IS é grupo de verdade, Distribution é só e-mail, Contacts é só na lista, Skip é sem grupos.
+
+### Update created groups e Update matched groups
+
+A mesma lógica dos usuários. Num grupo, o que mais importa é a lista de membros: com ENABLE, quem entra ou sai do grupo na origem entra ou sai no destino também.
+
+### Convert group options: trocar o escopo no caminho
+
+| Origem | Opções | Quando converter |
+|---|---|---|
+| **Domain Local** | Domain Local, Universal ou Skip | Para Universal quando o grupo precisa dar permissão em vários domínios da floresta de destino |
+| **Global** | Global, Universal ou Skip | Para Universal quando o destino tem vários domínios e o grupo vai receber membros de mais de um. Caso típico de consolidação de várias empresas numa floresta só |
+| **Universal** | Universal, Domain Local ou Skip | Para Domain Local quando o grupo precisa aceitar membros de outra floresta durante a coexistência com trust |
+
+Skip em qualquer linha deixa os grupos daquele escopo para trás.
+
+### Escolhas no laboratório
+
+| Opção | Escolha |
+|---|---|
+| Create groups as | AS-IS |
+| Update created groups | ENABLE |
+| Update matched groups | ENABLE |
+| Domain Local / Global / Universal | Mantidos no mesmo escopo |
+
+No lab essa tela ainda não teve efeito, porque a OU de origem só tem o `teste.acme1`.
+
+---
+
+*As próximas telas (Contacts, Devices, senha padrão, SID History e Mappings) vão entrando aqui conforme eu avanço no template.*
