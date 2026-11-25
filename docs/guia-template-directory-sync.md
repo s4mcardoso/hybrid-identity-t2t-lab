@@ -281,4 +281,46 @@ Como as contas nascem AS-IS (ativas) e a sincronização de senha ainda não est
 
 ---
 
-*As próximas telas (SID History e Mappings) vão entrando aqui conforme eu avanço no template.*
+## General sync options
+
+![Tela de opções gerais do template](img/31-template-geral.png)
+
+### Synchronize SID History
+
+Com essa opção ligada, o Directory Sync copia o SID que a conta tem na origem para o atributo `sIDHistory` da conta criada no destino. É o que permite ao usuário migrado continuar acessando recursos da origem.
+
+O caminho completo no lab:
+
+```
+teste.acme1 (Nexus) faz login
+   │  o token leva o SID novo (Nexus) e o SID antigo (sIDHistory = ...-1604)
+   ▼
+Acessa \\DC01-ACME\Financeiro
+   │  a trust deixa o login da Nexus entrar na Acme
+   │  o /enablesidhistory:yes faz a Acme aceitar o SID antigo, sem filtrar
+   ▼
+A pasta encontra o SID ...-1604 na permissão dela e libera o acesso
+```
+
+Para lembrar: o SID History é o crachá antigo grampeado no crachá novo. A porta da sala antiga só conhece o crachá antigo, e a trust com o `enablesidhistory` é o porteiro que aceita olhar o grampeado.
+
+Quando não ligar: quando não sobra recurso na origem que a pessoa precise acessar, porque arquivos e sistemas foram migrados e as permissões refeitas no destino. Também tem a questão de segurança: injetar o SID de um administrador no `sIDHistory` de uma conta comum é uma técnica de ataque conhecida. Por isso, em produção, o SID History é usado durante a migração e limpo depois, junto com o desligamento do `enablesidhistory` na trust.
+
+### Allow Mailbox Updates
+
+Por padrão, o Directory Sync não mexe em objetos do destino que já têm caixa de e-mail. É uma proteção: mudar atributos de quem já recebe e-mail ali pode quebrar o e-mail. É o que evita, por exemplo, o problema do `targetAddress` recolocado depois que a caixa foi migrada.
+
+Ligo só quando preciso que o Directory Sync continue atualizando dados de quem já tem caixa no destino (telefone, cargo, gerente) durante a coexistência. Nesse caso a Quest recomenda revisar o mapeamento dos atributos de e-mail para não interromper o fluxo de e-mail.
+
+Para lembrar: desmarcado é a placa de "não perturbe" na porta de quem já tem caixa.
+
+### Escolhas no laboratório
+
+| Opção | Escolha |
+|---|---|
+| Synchronize SID History | Marcado |
+| Allow Mailbox Updates | Desmarcado (não há Exchange local) |
+
+---
+
+*A tela de Mappings entra aqui quando eu terminar o template.*
