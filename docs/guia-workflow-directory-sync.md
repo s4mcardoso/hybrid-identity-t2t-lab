@@ -310,4 +310,25 @@ Próximo passo: rodar o Test Mode de novo. Se o erro sumir, foi falha passageira
 
 ---
 
+### Segunda execução em Test Mode
+
+Rodei o Test Mode de novo e o erro não voltou. Todas as etapas terminaram só com mensagens Info.
+
+O detalhe mais interessante está nas consultas LDAP do Read:
+
+| Ambiente | Faixa de USN lida | Por quê |
+|---|---|---|
+| **Acme-AD** | `uSNChanged>=0` até 33241 | Leitura completa de novo. Na primeira execução o erro aconteceu justamente na hora de gravar o `LastPushUsn` da Acme, então a Quest não tinha ponto de partida salvo |
+| **Nexus-AD** | `uSNChanged>=35856` até 35861 | Leitura incremental. O `LastPushUsn` da Nexus tinha sido salvo (35855), então só o que mudou depois disso foi lido |
+
+Isso confirma o diagnóstico: o erro da primeira execução foi no backend, ao salvar o controle de USN da Acme, e não na leitura do AD.
+
+Na leitura incremental também aparece uma consulta em `CN=Deleted Objects`. É assim que o Directory Sync descobre o que foi apagado na origem desde a última execução.
+
+Para lembrar: o USN é o número da página onde você parou o livro. Com o marcador salvo, a próxima leitura começa dali. Se o marcador some, a leitura volta para a página 1. Dá mais trabalho, mas o resultado é o mesmo.
+
+O Match continuou encontrando os objetos da Nexus mesmo sem relê-los, porque a Quest guarda no banco dela o que foi lido nas execuções anteriores.
+
+---
+
 *A execução e o resultado do workflow vão entrando aqui.*
