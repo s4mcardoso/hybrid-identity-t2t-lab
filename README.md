@@ -775,6 +775,10 @@ C:\Financeiro ACME\teste.acme1:(OI)(CI)(M)
 
 O SID do `teste.acme1` na Acme é `S-1-5-21-2792967527-818994920-2376679453-1604`. É esse valor que precisa aparecer no `sIDHistory` da conta nova na Nexus depois da migração.
 
+#### Template do Directory Sync
+
+Comecei a montar o template `Local to Local SID History Sync` (origem e destino do tipo Local). As opções de cada tela, com o que fazem e quando usar, estão no [guia de consulta do template](docs/guia-template-directory-sync.md).
+
 #### Próximos passos desta fase
 
 - Criar o workflow no Directory Sync para levar o `teste.acme1` da Acme para a Nexus com SID History.
