@@ -323,4 +323,45 @@ Para lembrar: desmarcado é a placa de "não perturbe" na porta de quem já tem 
 
 ---
 
-*A tela de Mappings entra aqui quando eu terminar o template.*
+## Mappings
+
+![Tela de Mappings do template](img/32-template-mappings.png)
+
+### O que é
+
+Cada objeto do AD é uma ficha cheia de campos (atributos). O mapeamento diz, campo por campo, de onde vem cada informação da ficha nova no destino.
+
+| Coluna | O que significa |
+|---|---|
+| **Target** | O campo preenchido no destino |
+| **Source** | De onde vem o valor, na origem |
+| **Type** | Como o valor é transferido. Basic é cópia direta. O botão ADVANCED cria regras com transformação |
+| **Target Object Type** | Para que tipo de objeto a regra vale (All, só usuários, só grupos...) |
+
+A linha `company | Basic | company | All` quer dizer: o campo company do destino recebe o company da origem, copiado do jeito que está, para todos os tipos de objeto. O template já vem com 16 páginas de mapeamentos padrão.
+
+Para lembrar: o mapeamento é o de-para da mudança. O que estava na gaveta X da mesa antiga vai para a gaveta X da mesa nova, e de vez em quando eu troco de gaveta ou mudo o conteúdo no caminho.
+
+### É o mesmo conceito das regras do Entra Connect
+
+Na Fase 5 do README criei regras no Entra Connect para reescrever o UPN e zerar `mail` e `proxyAddresses` com `AuthoritativeNull`. Isso é mapeamento, só que em outra ferramenta.
+
+### Quando mexer, em projeto real
+
+| Situação | O que se faz |
+|---|---|
+| Trocar o domínio do e-mail e do UPN | Regra que transforma `joao@acme.com` em `joao@nexus.com` |
+| Marcar as contas migradas | Preencher um `extensionAttribute` com algo como "MIGRADO-ACME" |
+| Não levar um atributo | Remover a linha do mapeamento |
+| Proteger o e-mail | Revisar `mail`, `proxyAddresses` e `targetAddress`, principalmente com o Allow Mailbox Updates ligado |
+
+### O UPN no laboratório
+
+O `teste.acme1` tem UPN `teste.acme1@acme.lab`, e com o mapeamento padrão a conta criada na Nexus nasce com o mesmo UPN. Com trust de floresta, o Windows usa o sufixo do UPN para decidir para qual floresta mandar o login. Então quem digita `teste.acme1@acme.lab` é autenticado na Acme, na conta antiga. Para testar a conta nova, o login é `NEXUS\teste.acme1`. Em projeto real, reescrever o UPN para o domínio do destino é uma das regras que se cria aqui.
+
+### Escolha no laboratório
+
+Mantive os mapeamentos padrão, como recomenda o guia de SID History da Quest.
+
+---
+
