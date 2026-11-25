@@ -247,4 +247,38 @@ Os computadores ficam para a fase de migração de dispositivos.
 
 ---
 
-*As próximas telas (senha padrão, SID History e Mappings) vão entrando aqui conforme eu avanço no template.*
+## Senha padrão (Password Settings)
+
+![Tela de senha padrão do template](img/30-template-senha.png)
+
+### Por que existe
+
+Quando o Directory Sync cria uma conta no destino, o AD exige uma senha desde o primeiro momento. E a senha da origem ele não consegue ler, porque o AD guarda só o hash, nunca a senha em si. Então é preciso informar uma senha para as contas novas.
+
+Para lembrar: é a chave provisória da mesa nova, que funciona até a chave definitiva chegar.
+
+### E a senha de verdade
+
+A chave definitiva vem da sincronização de senha (a que usa a passphrase configurada nos agentes). Quando ela está ligada, a senha real do usuário é copiada da origem e substitui a padrão. Sem ela, o usuário entra no destino com a senha padrão.
+
+### O aviso da tela
+
+*"The password policy on the source must meet or exceed the policy on the target."*
+
+A política de senha da origem precisa ser tão rígida quanto a do destino, ou mais. Quando a senha é sincronizada, o AD do destino confere se ela atende às regras dele. Se a origem aceita senhas de 6 caracteres e o destino exige 12, a senha é recusada e a sincronização daquele usuário falha. A própria senha padrão também precisa passar na política do destino.
+
+### Em projeto real
+
+A senha padrão é igual para todas as contas criadas, então quem souber dela entra em qualquer uma. Por isso:
+
+- as contas nascem DISABLED e ninguém consegue usar a senha padrão antes da virada;
+- a senha padrão é forte e aleatória, guardada só pelo time do projeto;
+- a sincronização de senha roda antes da virada, para que cada pessoa entre com a própria senha no dia D.
+
+### No laboratório
+
+Como as contas nascem AS-IS (ativas) e a sincronização de senha ainda não está ligada, o usuário migrado faz login no destino com a senha padrão. É ela que uso no teste de acesso à pasta `Financeiro`.
+
+---
+
+*As próximas telas (SID History e Mappings) vão entrando aqui conforme eu avanço no template.*
