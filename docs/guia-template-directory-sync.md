@@ -163,4 +163,33 @@ No lab essa tela ainda não teve efeito, porque a OU de origem só tem o `teste.
 
 ---
 
-*As próximas telas (Contacts, Devices, senha padrão, SID History e Mappings) vão entrando aqui conforme eu avanço no template.*
+## Contacts
+
+![Tela de Contacts do template](img/28-template-contacts.png)
+
+### O que é um contato
+
+Um contato é um cartão de visita dentro do AD: nome, e-mail, telefone e empresa. Não faz login, não tem SID (não recebe permissão) e o e-mail dele é de fora da empresa. Serve para colocar fornecedores, parceiros e o contador na lista de endereços do Outlook.
+
+Para lembrar: usuário é funcionário (tem crachá), contato é visitante na agenda (só nome e telefone).
+
+### Create new contacts as
+
+| Opção | O que faz | Quando usar |
+|---|---|---|
+| **AS-IS** | Copia os contatos da origem como contatos no destino | Quando a empresa nova também precisa enxergar esses fornecedores e parceiros |
+| **DO NOT CREATE** | Ignora os contatos da origem | Quando os contatos só interessam à origem, ou para evitar duplicidade: se a origem tem contatos que representam pessoas do destino (de uma sincronização de catálogo antiga), copiá-los de volta criaria um "João contato" ao lado do "João usuário" |
+
+Não existem as opções de ativo ou desativado, porque contato não faz login.
+
+### Update created contacts e Update matched contacts
+
+A mesma lógica de usuários e grupos. Se o telefone do fornecedor muda na origem, com ENABLE ele muda no destino.
+
+### Escolhas no laboratório
+
+AS-IS, ENABLE e ENABLE. A OU de origem não tem contatos, então não teve efeito.
+
+---
+
+*As próximas telas (Devices, senha padrão, SID History e Mappings) vão entrando aqui conforme eu avanço no template.*
