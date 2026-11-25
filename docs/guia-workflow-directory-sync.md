@@ -271,4 +271,43 @@ Envia e-mail quando o workflow falha ou termina com erros. Em produção vale co
 
 ---
 
+## 8. Primeira execução em Test Mode
+
+A primeira execução foi com Test Mode ligado. O resumo da tela é gerado por IA e ajuda pouco, então o que vale é o log completo, exportado em CSV na própria execução.
+
+### Como ler o log
+
+O log segue as quatro etapas, na ordem:
+
+| Etapa | O que apareceu | O que significa |
+|---|---|---|
+| **Read (Nexus)** | 23 objetos *out of scope* (krbtgt, Domain Admins, Administrator, Guest...) | O filtro de Well-known objects funcionando. Contas e grupos padrão do AD não entram em migração |
+| **Read (Nexus)** | 14 objetos lidos: Teste Nexus 1 a 10, svc-odm, ACME$ e duas contas MSOL_ | O workflow também lê o destino, porque o Match precisa saber o que já existe lá. ACME$ é a conta da trust; as MSOL_ são as contas do Entra Connect |
+| **Read (Acme)** | 1 objeto lido: Teste Acme 1, na OU Migrar-Nexus | O escopo da origem funcionando: só a OU de migração foi lida |
+| **Match** | *Unable to match source object CN=Teste Acme 1... No matching object found* | Não é erro. Sem par no destino, o objeto vai ser criado |
+| **Stage** | *Syncing SidHistory ... Source DomainController: DC01-ACME* e *New User object will be created* | O usuário seria criado na Nexus com o SID History da Acme |
+| **Write** | *Skipping creation of update jobs because workflow is running in test mode* | Test Mode fazendo o papel dele |
+
+Para lembrar: o Read lê os dois lados. A origem para saber quem vai, o destino para saber quem já está lá. Por isso o total de objetos lidos é maior do que o número de usuários migrados.
+
+### O erro no Read da Acme
+
+```
+Read: An error occurred while executing the command definition. See the inner exception for details.
+```
+
+Pontos que o log mostra:
+
+- O erro está no job da **Acme-AD**, logo depois de `LastPushUsn updated to 33235`, no fim da criação dos jobs de leitura. O job da Nexus terminou com `Done creating retrieval jobs`; o da Acme terminou com o erro no lugar dessa linha.
+- Mesmo assim o Teste Acme 1 foi lido, casado e preparado normalmente, porque o job de leitura dele já tinha sido criado.
+- *Command definition* é mensagem do Entity Framework, a camada de banco de dados do lado da Quest. Não é erro de LDAP, de permissão ou de agente.
+
+O resumo de IA sugeriu reinstalar o agente e limpar os atributos `msExchUMSpokenName` e `Comment`. Nenhuma das duas faz sentido aqui: o agente leu e conectou nos dois DCs, e o AD nem tem o schema do Exchange.
+
+Para lembrar: antes de seguir a sugestão de um resumo automático, abra o log e veja em qual ambiente, em qual etapa e em qual linha o erro aparece. O log mostra o que aconteceu; o resumo é um palpite.
+
+Próximo passo: rodar o Test Mode de novo. Se o erro sumir, foi falha passageira no backend. Se voltar sempre no mesmo ponto, vira chamado na Quest com o ID da execução.
+
+---
+
 *A execução e o resultado do workflow vão entrando aqui.*
