@@ -210,4 +210,41 @@ AS-IS, ENABLE e ENABLE. A OU de origem não tem contatos, então não teve efeit
 
 ---
 
-*As próximas telas (Devices, senha padrão, SID History e Mappings) vão entrando aqui conforme eu avanço no template.*
+## Devices
+
+![Tela de Devices do template](img/29-template-devices.png)
+
+### O que é um device
+
+Quando um computador entra no domínio, o AD cria uma conta para ele, parecida com a de um usuário: nome, SID e uma senha que o computador e o DC combinam entre si e trocam sozinhos de tempos em tempos. O `Test-ComputerSecureChannel` testa justamente se essa senha ainda bate com a do DC.
+
+Para lembrar: o usuário tem crachá, e o computador também tem o dele. É o crachá do computador que deixa a máquina conversar com o domínio.
+
+### Copiar a conta não migra o computador
+
+Criar a conta do computador no destino não muda nada na máquina. Ela continua no domínio antigo, falando com o DC antigo. A conta nova fica vazia, como um crachá que ninguém usa. Para o computador mudar de domínio é preciso mexer na própria máquina (sair do domínio antigo, entrar no novo, ajustar perfis e permissões), e isso é trabalho do módulo de migração de dispositivos do ODM (Active Directory), não do Directory Sync.
+
+### Create new devices as
+
+| Opção | O que faz | Quando usar |
+|---|---|---|
+| **AS-IS, ENABLED ou DISABLED** | Cria a conta do computador no destino, com a mesma lógica dos usuários | Quando o projeto vai migrar computadores e quer as contas pré-criadas. Normalmente DISABLED, para a conta só acordar no dia da virada daquela máquina |
+| **SKIP** | Não cria contas de computador | Workflow só de identidades (usuários e grupos), ou computadores migrados de outro jeito |
+
+Update created devices e Update matched devices seguem a mesma lógica das outras telas. Com SKIP, perdem o sentido.
+
+### Escolhas no laboratório
+
+Essa foi a única tela em que mudei o padrão, seguindo o guia de SID History da Quest:
+
+| Opção | Escolha |
+|---|---|
+| Create new devices as | SKIP |
+| Update created devices | DISABLE |
+| Update matched devices | DISABLE |
+
+Os computadores ficam para a fase de migração de dispositivos.
+
+---
+
+*As próximas telas (senha padrão, SID History e Mappings) vão entrando aqui conforme eu avanço no template.*
