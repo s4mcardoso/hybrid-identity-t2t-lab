@@ -91,4 +91,72 @@ One-way sync, porque é uma migração da Acme para a Nexus.
 
 ---
 
-*As etapas (Read From, Match Objects, Stage Data e Write To) vão entrando aqui conforme eu configuro o workflow.*
+## Tela das etapas
+
+![Etapas do workflow](img/36-workflow-etapas.png)
+
+À esquerda ficam as peças disponíveis, que podem ser arrastadas para o workflow. À direita fica o workflow, que no one-way já vem com Read From, Match Objects, Stage Data e Write To. Cada etapa tem um botão Select para configurar, dá para reordenar arrastando e remover pelo X.
+
+Duas peças não entram no padrão:
+
+| Peça | O que faz | Quando usar |
+|---|---|---|
+| **Delete Objects** | Regras de exclusão: o que fazer no destino quando um objeto some da origem ou sai do escopo | Convivência longa, para o destino acompanhar desligamentos. Uma regra errada apaga contas em massa, então muita gente prefere tratar desligamentos à mão numa migração |
+| **Run PowerShell Scripts** | Roda um script próprio pelo agente, no meio do workflow | Algo que o Directory Sync não faz sozinho: colocar os migrados num grupo, preencher um atributo específico, gerar relatório |
+
+Para lembrar: Delete é a borracha, usada com muito cuidado. PowerShell é o canivete suíço.
+
+No lab usei só as quatro etapas padrão.
+
+---
+
+## 1. Read From
+
+Selecionei os dois ambientes, Acme-AD e Nexus-AD. A Acme para saber quem migrar, a Nexus para a etapa seguinte conferir quem já existe lá.
+
+---
+
+## 2. Match Objects
+
+![Configuração do Match Objects](img/37-workflow-match.png)
+
+### O que é
+
+É onde o Directory Sync decide se uma conta da origem e uma do destino são a mesma pessoa, comparando atributos. É aqui que acontece o "casamento" de que fala o guia do template:
+
+- com match, ele atualiza a conta que já existe no destino;
+- sem match, ele cria uma conta nova.
+
+### Por que é a etapa mais perigosa
+
+Casar pelo nome (`cn`) pode juntar duas pessoas diferentes com o mesmo nome: o João Silva do financeiro da Acme sobrescreve cargo, telefone e gerente do João Silva do comercial da Nexus. O erro contrário também acontece: se o atributo não bate (um e-mail digitado diferente), a pessoa não é reconhecida e ganha uma conta duplicada.
+
+Para lembrar: casar é reconhecer alguém pelo documento. Usar o CPF (único), não o nome (que se repete). `sAMAccountName`, UPN, e-mail e `employeeID` são CPF; `cn` e `displayName` são nome.
+
+### Regras em "OU", e a ordem importa
+
+Os pares de atributos são avaliados como condições OU. Quando um par encontra correspondência, os outros não são verificados. Por isso o atributo mais confiável vem primeiro. O limite é de cinco pares por par de ambientes.
+
+### Opções da tela
+
+| Opção | O que faz |
+|---|---|
+| **Add Attribute** | Adiciona mais um par de atributos para comparar |
+| **Match across all object types** | Permite casar objetos de tipos diferentes, como um usuário da origem com um contato do destino. Desmarcado, usuário só casa com usuário |
+| **Add Another Pair** | Adiciona outro par de ambientes (por exemplo, Acme com um tenant da nuvem), com regras próprias |
+
+### Escolhas no laboratório
+
+| Origem (Acme-AD) | Destino (Nexus-AD) |
+|---|---|
+| `sAMAccountName` | `sAMAccountName` |
+| `userPrincipalName` | `userPrincipalName` |
+| `mail` | `mail` |
+
+Match across all object types desmarcado. O guia da Quest também coloca o `cn` entre os pares, mas deixei de fora: é o nome da pessoa, e nomes se repetem.
+
+Como nenhum desses atributos do `teste.acme1` existe na Nexus, o esperado é não haver match e a conta ser criada.
+
+---
+
+*As etapas Stage Data e Write To vão entrando aqui conforme eu configuro o workflow.*
