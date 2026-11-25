@@ -781,6 +781,8 @@ Comecei a montar o template `Local to Local SID History Sync` (origem e destino 
 
 O workflow, com as etapas e as escolhas de cada uma, está no [guia de consulta do workflow](docs/guia-workflow-directory-sync.md).
 
+As abas de configuração de cada ambiente (escopo de OUs, filtros, senhas, descoberta) estão no [guia de consulta dos ambientes](docs/guia-ambientes-directory-sync.md).
+
 #### Próximos passos desta fase
 
 - Criar o workflow no Directory Sync para levar o `teste.acme1` da Acme para a Nexus com SID History.
