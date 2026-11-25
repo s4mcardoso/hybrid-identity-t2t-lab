@@ -8,6 +8,8 @@ Anotações sobre as abas de configuração de um ambiente local (*Environments 
 
 ## General
 
+![General](img/39-ambiente-general.png)
+
 | Opção | O que é |
 |---|---|
 | **Environment Name** | Nome do ambiente |
@@ -36,6 +38,10 @@ Quais agentes atendem o ambiente. No lab, um só (`SRV-ODM-ACME` na Acme). Em pr
 
 ## Domain Controllers
 
+![Domain Controllers](img/40-ambiente-dcs.png)
+
+No lab, o Last Pushed USN da Acme estava em 0: o Directory Sync nunca tinha gravado nada nela, o que faz sentido para um ambiente que é só origem.
+
 | Coluna | O que é |
 |---|---|
 | **GC / PDC Emulator** | Se o DC é Global Catalog (índice da floresta) e PDC Emulator (o DC de referência para senhas e horário). No lab, o DC01 é os dois, e por isso o `TcpipClientSupport` do SID History foi feito nele |
@@ -61,6 +67,10 @@ Para lembrar: o ambiente é a janela pela qual o Directory Sync olha o AD.
 
 ## Filters
 
+![Filters](img/41-ambiente-filters.png)
+
+A aba tem modo BASIC (as caixas de seleção) e ADVANCED. No lab ficou com os quatro tipos incluídos e só os well-known objects excluídos. Os devices incluídos aqui não fazem diferença, porque o template está com SKIP para devices.
+
 | Opção | O que faz | Recomendação |
 |---|---|---|
 | **Include: Users, Groups, Contacts, Devices** | Quais tipos de objeto entram | Só os que o projeto migra |
@@ -74,6 +84,8 @@ Para lembrar: OU é o bairro, filtro é o porteiro do prédio.
 ---
 
 ## Passwords
+
+![Passwords](img/42-ambiente-passwords.png)
 
 Três métodos de sincronização de senha:
 
@@ -93,6 +105,10 @@ Para lembrar: RC4 é criptografia antiga que a Microsoft está aposentando. Sem 
 ---
 
 ## Discover
+
+![Discover](img/43-ambiente-discover.png)
+
+No lab o padrão era a cada 24 horas, o que explica o Next Discovery sempre 24 horas depois da última leitura.
 
 A descoberta atualiza a estrutura do AD conhecida pelo ambiente: OUs, schema e lista de DCs. Ela não lê os usuários; quem lê os objetos é a etapa Read From do workflow.
 
