@@ -183,6 +183,14 @@ Na prática, serve para:
 
 Para lembrar: contato do AD não é sobre poder mandar e-mail, é sobre aparecer na lista de ramais da empresa. Agenda pessoal só você vê; a GAL a empresa inteira vê.
 
+Em boa parte é comodidade: achar a pessoa pelo nome, não errar o endereço, ver cargo e telefone no Outlook. Mas em três situações vira necessidade:
+
+- **Controle centralizado.** Se o endereço do contato muda, o TI atualiza num lugar só e todo mundo passa a usar o novo. Com agendas pessoais, cada um continuaria mandando para o endereço antigo sem perceber.
+- **Grupos de e-mail.** O grupo não aceita um endereço digitado solto, só membros que existem no AD. Sem contato, não dá para incluir gente de fora.
+- **Migração.** Ninguém sabe de cabeça o e-mail de centenas de colegas que ainda estão do outro lado. Sem os contatos na GAL, a comunicação entre as duas empresas trava durante a coexistência. Por isso a sincronização de catálogo costuma ser uma das primeiras coisas configuradas num projeto de fusão ou separação.
+
+Resumo: no dia a dia, o contato é qualidade de vida; em grupos de e-mail e numa migração, é necessidade.
+
 ### Create new contacts as
 
 | Opção | O que faz | Quando usar |
