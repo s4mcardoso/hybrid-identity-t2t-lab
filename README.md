@@ -20,7 +20,7 @@ Projeto de estudo pessoal. Montei do zero um ambiente com duas florestas Active 
 |---|---|
 | **O que montei** | 6 servidores Windows Server 2022, 2 florestas Active Directory e 2 tenants Microsoft 365, simulando a separação de uma empresa de um grupo. |
 | **O problema** | Sincronizar a mesma floresta para dois tenants ao mesmo tempo, com o mesmo identificador para cada usuário nos dois lados. Sem isso, a migração gera contas duplicadas. |
-| **Resultado** | Os 10 usuários da Nexus com o mesmo `immutableId` nos dois tenants, conferido por script, regras de sincronização próprias, oito problemas resolvidos e documentados, os agentes do Quest Directory Sync conectados nas duas florestas e um usuário migrado da Acme para a Nexus com SID History, acessando a pasta antiga sem nenhuma mudança de permissão. |
+| **Resultado** | Os 10 usuários da Nexus com o mesmo `immutableId` nos dois tenants, conferido por script, regras de sincronização próprias, nove problemas resolvidos e documentados, os agentes do Quest Directory Sync conectados nas duas florestas e um usuário migrado da Acme para a Nexus com SID History, acessando a pasta antiga sem nenhuma mudança de permissão. |
 
 ---
 
@@ -86,6 +86,7 @@ Os detalhes de cada um estão em [Resolução de problemas](#resolução-de-prob
 | Na validação final, o `Connect-MgGraph` não funcionava no servidor | Separei três causas: módulo fora do caminho de módulos, falha no login por device code e teclado ABNT2 trocando símbolos ao colar comandos na VM | Comparação feita por script, com 10 de 10 IDs iguais |
 | O DC da Acme voltou 3 dias atrasado depois de ficar suspenso, e o `w32tm` se recusou a corrigir | Acertei a data manualmente, reconfigurei a fonte NTP e testei a comunicação com `w32tm /stripchart` | DC sincronizado com o `ntp.br`, sem risco para o Kerberos |
 | As duas VMs do Quest ODM não ligavam: "The specified virtual disk needs repair" | Fiz backup das pastas e reparei os discos com o `vmware-vdiskmanager` em vez de recriar as VMs | VMs ligando, disco e domínio conferidos, hardware ajustado para o agente |
+| O export do Entra Connect para o AD falhava em todo ciclo desde 17/11, sem ninguém notar | Li o histórico de Operations, achei a conta de serviço do ODM no Domain Admins e provei o AdminSDHolder com `adminCount` e herança | Conta de serviço tirada da sincronização e export voltando a `success` nos dois servidores |
 
 ---
 
@@ -828,6 +829,84 @@ A pasta só dá permissão para `ACME\teste.acme1`. Quem entrou foi um usuário 
 
 ---
 
+### Fase 11: Escopo do Entra Connect depois da migração
+
+**Objetivo:** religar os dois `SRV-ADC` sem que a conta criada pela migração suba para os tenants.
+
+Os dois Entra Connect estavam com *Sync all domains and OUs*, e nesse modo uma OU nova entra no escopo sozinha. Se os servidores voltassem assim, o `teste.acme1` da OU `Migrados-Acme` subiria para o Tenant Origem como uma segunda conta da mesma pessoa, e para o Tenant B como um usuário a mais.
+
+#### Religar sem sincronizar antes da hora
+
+O agendador pode rodar um ciclo logo depois que o serviço sobe. Para não dar tempo:
+
+1. Liguei cada `SRV-ADC` com o adaptador de rede desconectado (*Connect at power on* desmarcado).
+2. Parei o serviço ainda sem rede: `Stop-Service ADSync`.
+3. Reconectei a rede, subi o serviço e abri o assistente na sequência:
+
+```powershell
+Start-Service ADSync
+& "C:\Program Files\Microsoft Azure Active Directory Connect\AzureADConnect.exe" /InteractiveAuth
+```
+
+Enquanto o assistente está aberto, o agendador fica suspenso. A própria tela inicial avisa isso.
+
+> [!NOTE]
+> Tentei primeiro desligar o agendador com `Set-ADSyncScheduler -SyncCycleEnabled $false` com a VM sem rede, e o comando falhou com *"There was an issue obtaining cloud sync intervals"*. Os cmdlets do agendador consultam o tenant antes de qualquer coisa, então só funcionam com internet.
+
+#### Filtro de OU
+
+Em *Configure > Customize synchronization options > Domain/OU Filtering*, mudei para *Sync selected domains and OUs*:
+
+| Servidor | Diretório | OUs fora do escopo |
+|---|---|---|
+| `SRV-ADC-Acme` | `acme.lab` | `Contas-Servico`, `LostAndFound` |
+| `SRV-ADC-Acme` | `nexus.lab` | `Contas-Servico`, `LostAndFound`, `Migrados-Acme` |
+| `SRV-ADC-Nexus` | `nexus.lab` | `Contas-Servico`, `LostAndFound`, `Migrados-Acme` |
+
+A OU `Contas-Servico` entrou depois, por causa do [problema 9](#problema-9-o-export-para-o-ad-falhava-na-conta-de-serviço-do-odm).
+
+A tela de filtro mostra um diretório por vez, no campo *Directory*. Na primeira passada pelo `SRV-ADC-Acme` a `acme.lab` ficou sem alteração, e só percebi pelo histórico: a `nexus.lab` teve *Full Import* e a `acme.lab` só *Delta Import*. Mudança de filtro sempre gera *Full Import* no conector alterado. A tela *Ready to configure* também ajuda: ela lista quais conectores vão ser atualizados (*Update acme.lab Connector*).
+
+Na segunda passada, a OU `Migrar-Nexus` apareceu desmarcada na `acme.lab`. É onde está o `teste.acme1` original da Acme. Se tivesse ficado assim, ele seria apagado do Tenant Origem, e o usuário ficaria sem conta em nenhum tenant. Marquei de novo antes do *Configure*.
+
+#### OU nova com o domínio marcado
+
+Com a caixa do domínio marcada e algumas OUs desmarcadas, o assistente inclui o domínio inteiro e exclui só as OUs desmarcadas. Uma OU criada depois entra no escopo sem ninguém marcar. Conferi isso na prática: criei a `Contas-Servico`, movi a `svc-odm` para ela e o objeto continuou no connector space. Ao abrir o assistente de novo, a OU nova já aparecia marcada.
+
+#### Conferência
+
+No `SRV-ADC-Acme`, depois do ciclo:
+
+```powershell
+$alvos = @(
+    @{ C = "acme.lab";  DN = "CN=svc-odm,OU=Contas-Servico,DC=acme,DC=lab" },
+    @{ C = "nexus.lab"; DN = "CN=svc-odm,OU=Contas-Servico,DC=nexus,DC=lab" },
+    @{ C = "nexus.lab"; DN = "CN=Teste Acme 1,OU=Migrados-Acme,DC=nexus,DC=lab" },
+    @{ C = "acme.lab";  DN = "CN=Teste Acme 1,OU=Migrar-Nexus,DC=acme,DC=lab" }
+)
+foreach ($a in $alvos) {
+    try {
+        Get-ADSyncCSObject -ConnectorName $a.C -DistinguishedName $a.DN -ErrorAction Stop |
+            Select-Object DistinguishedName, IsPlaceHolder, ConnectedMVObjectId
+    } catch { [pscustomobject]@{ DistinguishedName = $a.DN; IsPlaceHolder = "não está no connector space" } }
+}
+```
+
+| Objeto | Resultado | Leitura |
+|---|---|---|
+| `svc-odm` da Acme | `IsPlaceHolder = True`, GUID zerado | Fora do escopo |
+| `svc-odm` da Nexus | `IsPlaceHolder = True`, GUID zerado | Fora do escopo |
+| `teste.acme1` em `Migrados-Acme` | Não está no connector space | Fora do escopo |
+| `teste.acme1` em `Migrar-Nexus` | `IsPlaceHolder = False`, ligado ao metaverso | Continua no Tenant Origem, como deve |
+
+As duas `svc-odm` continuam no connector space como *placeholder* porque são membros do Domain Admins, que está no escopo. O Entra Connect guarda o objeto só para manter a referência do grupo. Com o `ConnectedMVObjectId` zerado, ele não está no metaverso e não vai para nenhum tenant.
+
+A última linha é o controle: prova que o filtro tirou só o que devia.
+
+No `SRV-ADC-Nexus` a conferência foi a mesma, com um controle diferente: o `Teste Nexus 1`, em `CN=Users`, continuou no connector space.
+
+---
+
 ## Validação
 
 ### `ms-DS-ConsistencyGuid` gravado no AD
@@ -1128,6 +1207,44 @@ O `,0x8` no `manualpeerlist` faz o Windows usar o modo cliente do NTP, que funci
 
 ---
 
+### Problema 9: o export para o AD falhava na conta de serviço do ODM
+
+| | |
+|---|---|
+| **Sintoma** | No `SRV-ADC-Nexus`, o perfil *Export* do conector `nexus.lab` terminava com *completed-export-errors* em todo ciclo. O export para o Tenant B ficava em *success*, então nada chamava atenção. |
+| **Onde apareceu** | *Synchronization Service Manager > Operations*, linha do Export. O erro era um só: `CN=svc-odm,CN=Users,DC=nexus,DC=lab`, *permission-issue*, código **8344** (*Insufficient access rights to perform the operation*), primeira ocorrência em 17/11 e 55 tentativas. O `SRV-ADC-Acme` tinha o mesmo erro para a mesma conta. |
+| **Causa** | A `svc-odm` foi para o Domain Admins na Fase 8. Contas de grupos protegidos são tratadas pelo **AdminSDHolder**: o processo SDProp desliga a herança de permissões nelas e aplica uma lista fixa. A conta do conector do Entra Connect recebe permissão de escrita por herança na raiz do domínio, então perdeu o acesso à `svc-odm`. O que ela tentava gravar era o `ms-DS-ConsistencyGuid`, porque a conta foi criada depois da primeira sincronização. |
+
+O histórico mostrou que o erro já existia antes da mudança de filtro da Fase 11, o que tirou essa mudança da lista de suspeitos.
+
+**Prova** (no `DC02-Nexus`):
+
+```powershell
+$u = Get-ADUser svc-odm -Properties adminCount, nTSecurityDescriptor
+[pscustomobject]@{
+    adminCount          = $u.adminCount
+    'Herança desligada' = $u.nTSecurityDescriptor.AreAccessRulesProtected
+}
+# adminCount = 1, Herança desligada = True
+```
+
+**Solução:** em vez de devolver a permissão pelo AdminSDHolder, tirei a conta da sincronização. Uma conta de serviço com Domain Admin não tem por que existir no Entra ID.
+
+```powershell
+# Em cada DC
+New-ADOrganizationalUnit -Name "Contas-Servico" -Path "DC=nexus,DC=lab" `
+    -Description "Contas de servico, fora da sincronizacao com o Entra ID"
+Get-ADUser svc-odm | Move-ADObject -TargetPath "OU=Contas-Servico,DC=nexus,DC=lab"
+```
+
+Depois desmarquei a `Contas-Servico` no filtro dos dois `SRV-ADC` (ver [Fase 11](#fase-11-escopo-do-entra-connect-depois-da-migração)). O agente do Directory Sync continua funcionando, porque ele autentica pelo UPN `svc-odm@nexus.lab`, que não muda com a OU.
+
+**Resultado:** o Export do `nexus.lab` voltou a *success* nos dois servidores, e a `svc-odm` ficou só como *placeholder* no connector space.
+
+**Prevenção:** olhar a aba *Operations* também quando o export para o tenant está verde, e manter contas de serviço e contas administrativas numa OU fora da sincronização desde o começo.
+
+---
+
 ## Lições aprendidas
 
 1. **A ordem de instalação faz parte da arquitetura.** O primeiro Entra Connect grava o atributo no AD e o segundo só lê. Se a ordem muda, ou se o segundo servidor escolhe o anchor sozinho, o match se perde.
@@ -1152,6 +1269,14 @@ O `,0x8` no `manualpeerlist` faz o Windows usar o modo cliente do NTP, que funci
 20. **Test Mode antes de gravar.** As duas execuções de teste mostraram exatamente o que a execução real ia fazer, e a real rodou sem surpresa.
 21. **Log antes do resumo.** O resumo de IA da Quest sugeriu reinstalar o agente por causa de um erro genérico. O log mostrou que o erro era do backend, num ponto específico, e uma nova execução resolveu.
 22. **"Não casou" no Match quer dizer "vai ser criado".** Só é problema quando o objeto deveria casar com uma conta que já existe no destino.
+23. **"Sincronizar tudo" inclui o que for criado depois.** Toda OU nova precisa de uma decisão: entra ou não entra na nuvem.
+24. **Com o domínio marcado no filtro, OU nova entra sozinha.** O assistente grava o domínio inteiro como incluído e só as OUs desmarcadas como exceção. Eu tinha suposto o contrário, e o teste no connector space mostrou que estava errado.
+25. **O tipo de import mostra se o filtro mudou.** Filtro alterado gera *Full Import* no conector. Foi assim que percebi que a `acme.lab` não tinha sido alterada na primeira tentativa.
+26. **Antes do Next na tela de filtro, ler cada caixa desmarcada.** Uma OU desmarcada por engano apaga do tenant todo mundo que mora nela.
+27. **Export verde para a nuvem não quer dizer export verde para o AD.** O erro de permissão ficou nove dias sem ninguém ver porque só o export para o tenant era conferido.
+28. **Permission-issue em conta de admin costuma ser AdminSDHolder.** `adminCount = 1` e herança desligada confirmam em um comando.
+29. **"Não encontrado" só vale como prova com um controle.** Toda consulta de ausência no connector space teve um objeto que precisava ser encontrado na mesma consulta.
+30. **Objeto no connector space não quer dizer objeto sincronizado.** Um *placeholder* existe só para guardar a referência de um grupo. O `ConnectedMVObjectId` zerado é o que mostra que ele não vai para a nuvem.
 
 ---
 
@@ -1170,6 +1295,8 @@ O laboratório tem simplificações que não caberiam em produção:
 | Usuários de teste | Comunicação com os usuários, janela de manutenção e plano de rollback |
 | Trust two-way com SID History liberado sem prazo | Trust só na direção necessária e SID History desligado ao fim da migração |
 | Agente do ODM em VM com 6 GB, junto com outras VMs num notebook | Servidor dedicado com folga de recursos, conforme os requisitos da Quest |
+| Conta de serviço do ODM no Domain Admins e, no começo, dentro do escopo do Entra Connect | Contas de serviço e administrativas numa OU fora da sincronização desde o primeiro dia |
+| Filtro de OU ajustado depois que a migração criou objetos | Escopo do Entra Connect revisado antes de qualquer workflow que crie objetos no AD |
 
 ---
 
@@ -1225,6 +1352,7 @@ Os prints de antes e depois estão no [problema 5](#problema-5-as-regras-com-nul
 | ODM M365: tenants, contas, e-mail, OneDrive e Teams | Planejada |
 | SID History: pré-requisitos | Concluída |
 | Migração AD para AD com SID History | Concluída |
+| Escopo do Entra Connect depois da migração | Concluída |
 | ODM Active Directory: migração de estação | Planejada |
 
 O objetivo das próximas fases é praticar os três produtos do Quest On Demand que aparecem juntos num projeto real. A ordem vai do mais simples para o mais complexo, porque cada fase aproveita o que a anterior deixou pronto:
