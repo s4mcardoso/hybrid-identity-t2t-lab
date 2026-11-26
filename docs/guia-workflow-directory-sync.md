@@ -331,4 +331,48 @@ O Match continuou encontrando os objetos da Nexus mesmo sem relê-los, porque a 
 
 ---
 
-*A execução e o resultado do workflow vão entrando aqui.*
+## 9. Execução real
+
+Com o Test Mode desligado, a execução rodou sem erros. As etapas Read, Match e Stage repetiram o que o teste mostrou; a diferença está no Write.
+
+### O que o Write gravou
+
+| Atributo | Valor | Por quê |
+|---|---|---|
+| `adminDescription` | Created by DirSync | Marca os objetos criados pela Quest. Ajuda a achar e, se for preciso, limpar o que a migração criou |
+| `userPrincipalName` | teste.acme1@nexus.lab | O UPN já vem com o sufixo do destino |
+| `pwdLastSet` | 0 | Obriga a trocar a senha no primeiro login |
+| `userAccountControl` | 512 | Conta normal e habilitada |
+| `proxyAddresses` (x500) e `legacyExchangeDN` | Endereços X500 | Preparação para Exchange. Em produção, evita que respostas a e-mails antigos voltem com erro depois da migração |
+| `sIDHistory` | SID da conta na Acme | Gravado numa operação separada, logo depois da criação |
+
+O log também mostra o ciclo da licença: *Reserved license* ao criar os jobs de escrita e *Committed license* quando o objeto é gravado. Se o Write falhar, a licença não é consumida.
+
+Para lembrar: reserva, grava, consome.
+
+### Conferência
+
+```powershell
+Get-ADUser teste.acme1 -Properties sIDHistory | Select-Object Name, DistinguishedName, SID
+(Get-ADUser teste.acme1 -Properties sIDHistory).sIDHistory.Value
+```
+
+No primeiro comando o `sIDHistory` aparece cortado (`{S-1-5-2...`). Não é erro: o PowerShell encurta listas numa tabela. Chamar o atributo direto mostra o valor inteiro.
+
+| | SID | Domínio |
+|---|---|---|
+| **SID** | `S-1-5-21-3842603548-3798769282-497761282-1616` | Nexus |
+| **sIDHistory** | `S-1-5-21-2792967527-818994920-2376679453-1604` | Acme |
+
+Para lembrar: o SID é o RG novo; o sIDHistory é o RG antigo guardado no bolso. No login, os dois entram no token, e qualquer pasta que conhecia o RG antigo continua abrindo a porta.
+
+### Teste de acesso
+
+Login como `NEXUS\teste.acme1` no `SRV-ODMAD-Nexus`. A mensagem *"The user's password must be changed before signing in"* só aparece quando a senha digitada está certa, então ela já confirma que a senha padrão do template foi aplicada.
+
+![Acesso à pasta Financeiro com o usuário da Nexus](img/50-validacao-sid-history.png)
+
+O `whoami` mostra `nexus\teste.acme1`, a pasta `\\DC01-ACME\Financeiro` abriu e o arquivo `teste-migração` foi criado, então a permissão de modificação também veio pelo SID antigo.
+
+O teste foi feito no servidor membro e não no DC, porque um usuário comum não tem permissão de logon local num controlador de domínio.
+

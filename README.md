@@ -20,7 +20,7 @@ Projeto de estudo pessoal. Montei do zero um ambiente com duas florestas Active 
 |---|---|
 | **O que montei** | 6 servidores Windows Server 2022, 2 florestas Active Directory e 2 tenants Microsoft 365, simulando a separação de uma empresa de um grupo. |
 | **O problema** | Sincronizar a mesma floresta para dois tenants ao mesmo tempo, com o mesmo identificador para cada usuário nos dois lados. Sem isso, a migração gera contas duplicadas. |
-| **Resultado** | Os 10 usuários da Nexus com o mesmo `immutableId` nos dois tenants, conferido por script, regras de sincronização próprias, oito problemas resolvidos e documentados, os agentes do Quest Directory Sync conectados nas duas florestas e os pré-requisitos de SID History prontos, com trust entre as florestas. |
+| **Resultado** | Os 10 usuários da Nexus com o mesmo `immutableId` nos dois tenants, conferido por script, regras de sincronização próprias, oito problemas resolvidos e documentados, os agentes do Quest Directory Sync conectados nas duas florestas e um usuário migrado da Acme para a Nexus com SID History, acessando a pasta antiga sem nenhuma mudança de permissão. |
 
 ---
 
@@ -783,10 +783,48 @@ O workflow, com as etapas e as escolhas de cada uma, está no [guia de consulta 
 
 As abas de configuração de cada ambiente (escopo de OUs, filtros, senhas, descoberta) estão no [guia de consulta dos ambientes](docs/guia-ambientes-directory-sync.md).
 
-#### Próximos passos desta fase
+---
 
-- Criar o workflow no Directory Sync para levar o `teste.acme1` da Acme para a Nexus com SID History.
-- Conferir o `sIDHistory` da conta nova e testar o acesso a `\\DC01-ACME\Financeiro` com ela.
+### Fase 10: Migração do `teste.acme1` com SID History
+
+Com os pré-requisitos prontos, o workflow `Acme para Nexus - SID History` levou o `teste.acme1` da OU `Migrar-Nexus` (Acme) para a OU `Migrados-Acme` (Nexus).
+
+#### Execução
+
+1. Duas execuções em **Test Mode**. A primeira teve um erro no Read da Acme, no backend da Quest, na hora de salvar o controle de USN. A segunda rodou limpa. A análise dos dois logs está no [guia do workflow](docs/guia-workflow-directory-sync.md#8-primeira-execução-em-test-mode).
+2. Snapshot do DC01 e do DC02.
+3. Execução real, sem erros. Trechos do log:
+
+```
+Match Objects: Unable to match source object CN=Teste Acme 1,OU=Migrar-Nexus,DC=acme,DC=lab ... No matching object found.
+Write: LDAP Add CN=Teste Acme 1,OU=Migrados-Acme,DC=nexus,DC=lab
+Write: Added objectSid of teste.acme1 in acme.lab using DC01-ACME.acme.lab to sIDHistory of teste.acme1 in nexus.lab using DC02-NEXUS.nexus.lab.
+```
+
+#### Conferência no AD da Nexus
+
+```powershell
+Get-ADUser teste.acme1 -Properties sIDHistory | Select-Object Name, DistinguishedName, SID
+(Get-ADUser teste.acme1 -Properties sIDHistory).sIDHistory.Value
+```
+
+| Atributo | Valor | Domínio |
+|---|---|---|
+| `DistinguishedName` | `CN=Teste Acme 1,OU=Migrados-Acme,DC=nexus,DC=lab` | Nexus |
+| `SID` | `S-1-5-21-3842603548-3798769282-497761282-1616` | Nexus (conta nova) |
+| `sIDHistory` | `S-1-5-21-2792967527-818994920-2376679453-1604` | Acme (SID antigo) |
+
+#### Teste de acesso
+
+No `SRV-ODMAD-Nexus`, login como `NEXUS\teste.acme1` com a senha padrão do template. O Windows pediu a troca de senha no primeiro login, porque a conta foi criada com `pwdLastSet = 0`. Depois disso:
+
+- `whoami` retornou `nexus\teste.acme1`;
+- `\\DC01-ACME\Financeiro` abriu normalmente;
+- consegui criar um arquivo novo na pasta, o que confirma a permissão de modificação.
+
+![Acesso à pasta Financeiro com o usuário da Nexus](docs/img/50-validacao-sid-history.png)
+
+A pasta só dá permissão para `ACME\teste.acme1`. Quem entrou foi um usuário da Nexus, que leva o SID antigo no `sIDHistory`. Ninguém mexeu na permissão da pasta, e é exatamente esse o papel do SID History numa migração: o usuário muda de domínio e continua acessando os recursos antigos enquanto as permissões são refeitas com calma.
 
 ---
 
@@ -1111,6 +1149,9 @@ O `,0x8` no `manualpeerlist` faz o Windows usar o modo cliente do NTP, que funci
 17. **Trust de floresta filtra SID por padrão.** Sem o `/enablesidhistory:yes` no lado que confia, o SID antigo seria descartado e o teste falharia mesmo com o `sIDHistory` preenchido.
 18. **`nltest /sc_query` diz mais que o `netdom /verify`.** O `netdom` falhou sem motivo; o `nltest` mostrou na hora que o canal da trust estava OK.
 19. **Ler a tela do instalador até o fim.** A conta de SID History parecia obrigatória, mas o próprio texto da tela dizia que, com trust, ela não é necessária.
+20. **Test Mode antes de gravar.** As duas execuções de teste mostraram exatamente o que a execução real ia fazer, e a real rodou sem surpresa.
+21. **Log antes do resumo.** O resumo de IA da Quest sugeriu reinstalar o agente por causa de um erro genérico. O log mostrou que o erro era do backend, num ponto específico, e uma nova execução resolveu.
+22. **"Não casou" no Match quer dizer "vai ser criado".** Só é problema quando o objeto deveria casar com uma conta que já existe no destino.
 
 ---
 
@@ -1183,7 +1224,7 @@ Os prints de antes e depois estão no [problema 5](#problema-5-as-regras-com-nul
 | Directory Sync: agentes nas duas florestas | Concluída |
 | ODM M365: tenants, contas, e-mail, OneDrive e Teams | Planejada |
 | SID History: pré-requisitos | Concluída |
-| Migração AD para AD com SID History | Planejada |
+| Migração AD para AD com SID History | Concluída |
 | ODM Active Directory: migração de estação | Planejada |
 
 O objetivo das próximas fases é praticar os três produtos do Quest On Demand que aparecem juntos num projeto real. A ordem vai do mais simples para o mais complexo, porque cada fase aproveita o que a anterior deixou pronto:
@@ -1200,7 +1241,7 @@ Próximas ações:
 - [ ] Rodar o Discovery de contas e grupos.
 - [ ] Definir como o ODM vai casar as contas. No Tenant B as contas já existem, criadas pelo Entra Connect, então o ODM deve casar e não criar. O UPN do mesmo usuário é diferente em cada tenant (só a parte antes do `@` é igual), então o match não pode ser pelo UPN completo.
 - [ ] Migrar e-mail, OneDrive e Teams de alguns usuários de teste e registrar os resultados aqui.
-- [ ] Migrar o `teste.acme1` da Acme para a Nexus com SID History e testar o acesso à pasta `Financeiro`.
+- [x] Migrar o `teste.acme1` da Acme para a Nexus com SID History e testar o acesso à pasta `Financeiro`.
 - [ ] Instalar o filtro de senha nos DCs e testar a sincronização de senha.
 - [ ] Criar uma VM Windows 10 ou 11 no `nexus.lab` para a fase do ODM Active Directory.
 
