@@ -1,39 +1,86 @@
+﻿#Requires -Version 5.1
 <#
-    Kit de validacao para o piloto do ODM M365.
-    Cria um conteudo conhecido (e-mails, pasta, anexo, reuniao, contato e arquivos no OneDrive)
-    nas contas de teste do tenant de origem, para comparar depois da migracao.
+.SYNOPSIS
+    Kit de validação para o piloto do Quest ODM M365.
 
-    Como funciona:
-      0. Pede a criacao antecipada dos OneDrives na origem e no destino (SharePoint Online).
-      1. Login de admin (permissao delegada) para criar um app temporario no tenant de origem.
-      2. O app recebe permissoes de aplicacao no Microsoft Graph (consentimento de admin).
-      3. Login como o app e criacao do conteudo em cada usuario. Espera o OneDrive ficar pronto.
-      4. Novo login de admin para apagar o app temporario.
+.DESCRIPTION
+    Cria um conteúdo conhecido nas contas de teste do tenant de origem (e-mails, pasta,
+    anexo, reunião, contato e arquivos no OneDrive) e gera um manifesto em CSV.
+    Depois da migração, o manifesto diz exatamente o que precisa ter chegado no destino.
 
-    Logins que aparecem (todos com admin):
-      SharePoint da origem, SharePoint do destino, Graph da origem (2 vezes).
+    Como funciona por dentro:
+      1. Login de admin e confirmação do tenant.
+      2. Escolha das contas de teste.
+      3. Criação de um app temporário com permissões de aplicação no Microsoft Graph.
+      4. Pedido de criação antecipada dos OneDrives (origem e destino).
+      5. Criação do conteúdo, entrando como o app.
+      6. Resumo, manifesto e exclusão do app temporário.
 
-    Rodar no PowerShell do notebook (nao precisa ser nas VMs).
+    USE SÓ EM TENANT DE LABORATÓRIO OU COM APROVAÇÃO DO CLIENTE.
+    O app temporário tem permissão de ler e gravar e-mail e arquivos de todo o tenant
+    enquanto existe (alguns minutos).
+
+.EXAMPLE
+    .\kit-validacao-odm.ps1
+    Abre o menu e a tabela de escolha das contas.
+
+.EXAMPLE
+    .\kit-validacao-odm.ps1 -Modo SoOneDrive -Usuarios teste.nexus1,teste.nexus2
 #>
+[CmdletBinding()]
 param(
-    [string]  $Tenant        = "<tenant-origem>.onmicrosoft.com",
-    [string]  $TenantDestino = "<tenant-destino>.onmicrosoft.com",
-    [string[]]$Usuarios = @("teste.nexus1", "teste.nexus2", "teste.nexus3"),
-    # Cria so os arquivos do OneDrive (para rodar de novo sem duplicar e-mails)
-    [switch]  $SoOneDrive,
-    # Pula o pedido de criacao dos OneDrives (se ja foi feito antes)
-    [switch]  $SemProvisionar,
-    # Quanto tempo esperar o OneDrive de cada usuario ficar pronto
-    [int]     $EsperaOneDriveMin = 40
+    [string]   $Tenant        = "__ORIGEM__",
+    [string]   $TenantDestino = "__DESTINO__",
+    [string[]] $Usuarios,
+    [string]   $CsvUsuarios,
+    [ValidateSet("Completo", "SoOneDrive")]
+    [string]   $Modo,
+    [ValidateRange(1, 50)]
+    [int]      $QtdEmails = 3,
+    [switch]   $SemProvisionar,
+    [int]      $EsperaOneDriveMin = 40
 )
 
 $ErrorActionPreference = "Stop"
+try { $Host.UI.RawUI.WindowTitle = "Kit de validação · piloto ODM M365" } catch { }
 
-if (-not (Get-Module -ListAvailable Microsoft.Graph.Authentication)) {
-    Install-Module Microsoft.Graph.Authentication -Scope CurrentUser -Force
+# =============================================================== visual
+$LARG = 66
+function Linha([string]$c = "─", [string]$cor = "DarkGray") { Write-Host ("  " + ($c * $LARG)) -ForegroundColor $cor }
+function Banner {
+    Clear-Host
+    Write-Host ""
+    Linha "═" "DarkCyan"
+    Write-Host "   KIT DE VALIDAÇÃO  ·  PILOTO QUEST ODM M365" -ForegroundColor White
+    Write-Host "   Conteúdo conhecido nas contas de teste, para conferir a migração" -ForegroundColor Gray
+    Linha "═" "DarkCyan"
+    Write-Host "   Use só em tenant de laboratório ou com aprovação do cliente." -ForegroundColor DarkYellow
 }
-Import-Module Microsoft.Graph.Authentication
+function Etapa([int]$n, [string]$texto) {
+    Write-Host ""
+    Write-Host ("  {0}/6  {1}" -f $n, $texto.ToUpper()) -ForegroundColor Cyan
+    Linha
+}
+function Ok([string]$t)    { Write-Host "   [ OK ] $t" -ForegroundColor Green }
+function Info([string]$t)  { Write-Host "   [ .. ] $t" -ForegroundColor Gray }
+function Aviso([string]$t) { Write-Host "   [ !! ] $t" -ForegroundColor Yellow }
+function Falha([string]$t) { Write-Host "   [ XX ] $t" -ForegroundColor Red }
+function Campo([string]$rotulo, [string]$valor) {
+    Write-Host ("   {0,-14}" -f $rotulo) -ForegroundColor DarkGray -NoNewline
+    Write-Host $valor -ForegroundColor White
+}
+function Pergunta([string]$t) {
+    Write-Host ""
+    Write-Host "   $t " -ForegroundColor White -NoNewline
+    return (Read-Host).Trim()
+}
+function Encerrar([string]$motivo) {
+    Write-Host ""
+    Aviso $motivo
+    throw "ENCERRADO"
+}
 
+# =============================================================== Graph
 function Graph {
     param([string]$Metodo, [string]$Uri, $Corpo, [string]$Tipo = "application/json", [int]$Tentativas = 6)
     for ($i = 1; $i -le $Tentativas; $i++) {
@@ -42,181 +89,282 @@ function Graph {
             if ($Tipo -eq "application/json") { $Corpo = $Corpo | ConvertTo-Json -Depth 10 }
             return Invoke-MgGraphRequest -Method $Metodo -Uri $Uri -Body $Corpo -ContentType $Tipo
         } catch {
-            $msg = $_.Exception.Message
-            if ($i -lt $Tentativas -and $msg -match "403|401|Forbidden|Unauthorized|429|503|ErrorAccessDenied") {
-                Write-Host "   aguardando permissoes ($i/$Tentativas)..." -ForegroundColor DarkGray
+            if ($i -lt $Tentativas -and $_.Exception.Message -match "403|401|Forbidden|Unauthorized|429|503|ErrorAccessDenied") {
+                Info "aguardando as permissões valerem ($i/$Tentativas)..."
                 Start-Sleep -Seconds 20
             } else { throw }
         }
     }
 }
-
-# ---------------------------------------------------------------- 0. OneDrive antecipado
-if (-not $SemProvisionar) {
-    if (-not (Get-Module -ListAvailable Microsoft.Online.SharePoint.PowerShell)) {
-        Install-Module Microsoft.Online.SharePoint.PowerShell -Scope CurrentUser -Force
-    }
-    Import-Module Microsoft.Online.SharePoint.PowerShell -DisableNameChecking
-    foreach ($t in @($Tenant, $TenantDestino)) {
-        $prefixo = $t.Split('.')[0]
-        Write-Host "`n[0/4] Pedindo os OneDrives no $t (login de admin do SharePoint desse tenant)..." -ForegroundColor Cyan
-        Connect-SPOService -Url "https://$prefixo-admin.sharepoint.com"
-        Request-SPOPersonalSite -UserEmails ($Usuarios | ForEach-Object { "$_@$t" }) -NoWait
-        Disconnect-SPOService
-        Write-Host "   pedido feito para: $($Usuarios -join ', ')"
-    }
+function Todos([string]$Uri) {
+    $itens = @(); $prox = $Uri
+    while ($prox) { $r = Graph GET $prox; $itens += $r.value; $prox = $r.'@odata.nextLink' }
+    return $itens
 }
 
-function Esperar-OneDrive($upn) {
-    $limite = (Get-Date).AddMinutes($EsperaOneDriveMin)
-    while ((Get-Date) -lt $limite) {
-        try { Graph GET "v1.0/users/$upn/drive?`$select=id" -Tentativas 1 | Out-Null; return $true }
-        catch {
-            Write-Host "   OneDrive ainda sendo criado, nova tentativa em 1 min..." -ForegroundColor DarkGray
-            Start-Sleep -Seconds 60
+# =============================================================== início
+$pastaBase = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
+$carimbo   = Get-Date -Format "yyyyMMdd-HHmmss"
+$pastaLog  = Join-Path $pastaBase "logs"
+New-Item -ItemType Directory -Path $pastaLog -Force | Out-Null
+$arqLog    = Join-Path $pastaLog "kit-validacao-$carimbo.log"
+Start-Transcript -Path $arqLog | Out-Null
+$app = $null
+
+try {
+    Banner
+
+    if (-not $Modo) {
+        Write-Host ""
+        Write-Host "   O que você quer fazer?" -ForegroundColor White
+        Write-Host ""
+        Write-Host "     [1]  Kit completo   " -ForegroundColor Cyan -NoNewline; Write-Host "e-mails, pasta, anexo, reunião, contato e OneDrive" -ForegroundColor Gray
+        Write-Host "     [2]  Só OneDrive    " -ForegroundColor Cyan -NoNewline; Write-Host "quando os e-mails já foram criados antes" -ForegroundColor Gray
+        Write-Host "     [0]  Sair" -ForegroundColor Cyan
+        switch (Pergunta "Opção:") {
+            "1"     { $Modo = "Completo" }
+            "2"     { $Modo = "SoOneDrive" }
+            default { Encerrar "Nada foi feito." }
         }
     }
-    return $false
-}
+    if ($Tenant -like "*__*" -or -not $Tenant) {
+        $Tenant = Pergunta "Tenant de ORIGEM (ex.: contoso.onmicrosoft.com):"
+    }
+    if ($TenantDestino -like "*__*") {
+        $TenantDestino = Pergunta "Tenant de DESTINO (Enter para pular o OneDrive do destino):"
+    }
 
-# ---------------------------------------------------------------- 1. App temporario
-Write-Host "`n[1/4] Login de admin no $Tenant (janela da Microsoft)..." -ForegroundColor Cyan
-Connect-MgGraph -TenantId $Tenant -Scopes "Application.ReadWrite.All", "AppRoleAssignment.ReadWrite.All" -NoWelcome
-Write-Host "   conectado como $((Get-MgContext).Account)"
+    foreach ($m in "Microsoft.Graph.Authentication", "Microsoft.Online.SharePoint.PowerShell") {
+        if ($m -like "*SharePoint*" -and $SemProvisionar) { continue }
+        if (-not (Get-Module -ListAvailable $m)) {
+            Info "instalando o módulo $m (só na primeira vez)..."
+            Install-Module $m -Scope CurrentUser -Force -AllowClobber
+        }
+    }
+    Import-Module Microsoft.Graph.Authentication
 
-$graphSp = Graph GET "v1.0/servicePrincipals(appId='00000003-0000-0000-c000-000000000000')"
-$perms   = "Mail.ReadWrite", "Calendars.ReadWrite", "Contacts.ReadWrite", "Files.ReadWrite.All", "User.Read.All"
-$roles   = $graphSp.appRoles | Where-Object { $_.value -in $perms -and $_.allowedMemberTypes -contains "Application" }
+    # ----------------------------------------------------------- 1
+    Etapa 1 "Conectar e confirmar o tenant"
+    Info "abrindo o login. Use a conta de ADMIN do tenant de origem (clique em 'Usar outra conta' se precisar)."
+    Connect-MgGraph -TenantId $Tenant -NoWelcome -Scopes `
+        "Application.ReadWrite.All", "AppRoleAssignment.ReadWrite.All", "User.Read.All", "Organization.Read.All"
+    $org = (Graph GET "v1.0/organization?`$select=displayName,verifiedDomains").value[0]
+    $dominioInicial = ($org.verifiedDomains | Where-Object { $_.isInitial }).name
+    Write-Host ""
+    Campo "Organização"  $org.displayName
+    Campo "Tenant"       $dominioInicial
+    Campo "Conta"        (Get-MgContext).Account
+    Campo "Modo"         $(if ($Modo -eq "Completo") { "Kit completo" } else { "Só OneDrive" })
+    if ($TenantDestino) { Campo "Destino" $TenantDestino }
+    if ((Pergunta "É esse o tenant certo? (S/N):") -notmatch "^[sS]") { Encerrar "Cancelado antes de qualquer mudança." }
 
-$app = Graph POST "v1.0/applications" @{
-    displayName            = "Lab-Kit-Validacao-ODM (temporario)"
-    requiredResourceAccess = @(@{
-        resourceAppId  = $graphSp.appId
-        resourceAccess = @($roles | ForEach-Object { @{ id = $_.id; type = "Role" } })
-    })
-}
-$sp = Graph POST "v1.0/servicePrincipals" @{ appId = $app.appId }
-foreach ($r in $roles) {
-    Graph POST "v1.0/servicePrincipals/$($sp.id)/appRoleAssignments" @{
-        principalId = $sp.id; resourceId = $graphSp.id; appRoleId = $r.id
-    } | Out-Null
-}
-$segredo = Graph POST "v1.0/applications/$($app.id)/addPassword" @{
-    passwordCredential = @{ displayName = "kit"; endDateTime = (Get-Date).ToUniversalTime().AddHours(2).ToString("o") }
-}
-Disconnect-MgGraph | Out-Null
-Write-Host "   app criado ($($app.appId)) com: $($perms -join ', ')"
-Write-Host "   aguardando 60 s para o segredo e as permissoes valerem..."
-Start-Sleep -Seconds 60
+    # ----------------------------------------------------------- 2
+    Etapa 2 "Escolher as contas de teste"
+    if ($CsvUsuarios) {
+        $nomes = (Import-Csv $CsvUsuarios) | ForEach-Object { if ($_.UPN) { $_.UPN } else { $_.Usuario } }
+    } elseif ($Usuarios) {
+        $nomes = $Usuarios
+    } else {
+        Info "carregando os usuários do tenant..."
+        $lista = Todos "v1.0/users?`$select=displayName,userPrincipalName,assignedLicenses&`$top=999" |
+            ForEach-Object { [pscustomobject]@{
+                Nome      = $_.displayName
+                UPN       = $_.userPrincipalName
+                Licenciado = $(if ($_.assignedLicenses.Count -gt 0) { "Sim" } else { "Não" })
+            } } | Sort-Object Nome
+        Info "uma janela com a lista vai abrir. Selecione as contas (Ctrl + clique) e clique em OK."
+        $nomes = ($lista | Out-GridView -Title "Kit de validação: escolha as contas de teste e clique em OK" -OutputMode Multiple).UPN
+    }
+    $upns = @($nomes | Where-Object { $_ } | ForEach-Object { if ($_ -like "*@*") { $_ } else { "$_@$Tenant" } })
+    if (-not $upns) { Encerrar "Nenhuma conta escolhida. Nada foi feito." }
+    $upns | ForEach-Object { Ok $_ }
+    if ((Pergunta ("Criar o kit nessas {0} conta(s)? (S/N):" -f $upns.Count)) -notmatch "^[sS]") {
+        Encerrar "Cancelado antes de qualquer mudança."
+    }
 
-# ---------------------------------------------------------------- 2. Login como o app
-Write-Host "`n[2/4] Login como o app..." -ForegroundColor Cyan
-$cred = New-Object System.Management.Automation.PSCredential(
-    $app.appId, (ConvertTo-SecureString $segredo.secretText -AsPlainText -Force))
-Connect-MgGraph -TenantId $Tenant -ClientSecretCredential $cred -NoWelcome
+    # ----------------------------------------------------------- 3
+    Etapa 3 "Preparar o acesso (app temporário)"
+    $graphSp = Graph GET "v1.0/servicePrincipals(appId='00000003-0000-0000-c000-000000000000')"
+    $perms   = "Mail.ReadWrite", "Calendars.ReadWrite", "Contacts.ReadWrite", "Files.ReadWrite.All", "Application.ReadWrite.OwnedBy"
+    $roles   = $graphSp.appRoles | Where-Object { $_.value -in $perms -and $_.allowedMemberTypes -contains "Application" }
+    $app = Graph POST "v1.0/applications" @{
+        displayName            = "Kit-Validacao-ODM (temporario, apagar se encontrar)"
+        requiredResourceAccess = @(@{ resourceAppId = $graphSp.appId; resourceAccess = @($roles | ForEach-Object { @{ id = $_.id; type = "Role" } }) })
+    }
+    $sp = Graph POST "v1.0/servicePrincipals" @{ appId = $app.appId }
+    foreach ($r in $roles) {
+        Graph POST "v1.0/servicePrincipals/$($sp.id)/appRoleAssignments" @{ principalId = $sp.id; resourceId = $graphSp.id; appRoleId = $r.id } | Out-Null
+    }
+    # o próprio app vira dono do registro, para conseguir se apagar no final
+    Graph POST "v1.0/applications/$($app.id)/owners/`$ref" @{ "@odata.id" = "https://graph.microsoft.com/v1.0/directoryObjects/$($sp.id)" } | Out-Null
+    $segredo = Graph POST "v1.0/applications/$($app.id)/addPassword" @{
+        passwordCredential = @{ displayName = "kit"; endDateTime = (Get-Date).ToUniversalTime().AddHours(2).ToString("o") }
+    }
+    $criadoEm = Get-Date
+    Disconnect-MgGraph | Out-Null
+    Ok "app criado, com segredo válido por 2 horas"
+    Info ("permissões: " + ($perms -join ", "))
 
-# ---------------------------------------------------------------- 3. Conteudo
-Write-Host "`n[3/4] Criando o kit em cada usuario..." -ForegroundColor Cyan
-$fuso     = "E. South America Standard Time"
-$anexoB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(
-            "Anexo de teste do kit de validacao. Se este texto chegou inteiro, o anexo migrou."))
-$manifesto = @()
+    # ----------------------------------------------------------- 4
+    Etapa 4 "Pedir os OneDrives (origem e destino)"
+    if ($SemProvisionar) {
+        Info "pulado (-SemProvisionar)"
+    } else {
+        Import-Module Microsoft.Online.SharePoint.PowerShell -DisableNameChecking
+        $prefixos = $upns | ForEach-Object { $_.Split("@")[0] }
+        foreach ($t in @($Tenant, $TenantDestino) | Where-Object { $_ }) {
+            Info "login de ADMIN do SharePoint de $t"
+            Connect-SPOService -Url ("https://{0}-admin.sharepoint.com" -f $t.Split(".")[0])
+            Request-SPOPersonalSite -UserEmails ($prefixos | ForEach-Object { "$_@$t" }) -NoWait
+            Disconnect-SPOService
+            Ok "pedido feito no $t"
+        }
+    }
 
-foreach ($nome in $Usuarios) {
-    $upn = "$nome@$Tenant"
-    Write-Host "`n -> $upn"
-    $item = [ordered]@{ Usuario = $upn; Emails = 0; Anexo = $false; Pasta = $false; Reuniao = $false; Contato = $false; OneDrive = 0; Observacao = "" }
+    # ----------------------------------------------------------- 5
+    Etapa 5 "Criar o conteúdo"
+    $falta = 60 - [int]((Get-Date) - $criadoEm).TotalSeconds
+    if ($falta -gt 0) { Info "esperando $falta s para as permissões do app valerem..."; Start-Sleep -Seconds $falta }
+    $cred = New-Object System.Management.Automation.PSCredential($app.appId, (ConvertTo-SecureString $segredo.secretText -AsPlainText -Force))
+    Connect-MgGraph -TenantId $Tenant -ClientSecretCredential $cred -NoWelcome
 
-    try { Graph GET "v1.0/users/$upn/mailFolders/inbox?`$select=id" | Out-Null }
-    catch {
-        $item.Observacao = "Caixa ainda nao existe (licenca recente). Rode de novo mais tarde."
-        Write-Host "   $($item.Observacao)" -ForegroundColor Yellow
+    $fuso     = "E. South America Standard Time"
+    $anexoB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("Anexo de teste do kit de validacao. Se este texto chegou inteiro, o anexo migrou."))
+    $manifesto = @()
+    $n = 0
+
+    foreach ($upn in $upns) {
+        $n++
+        Write-Progress -Activity "Criando o kit" -Status "$upn ($n de $($upns.Count))" -PercentComplete ((($n - 1) / $upns.Count) * 100)
+        Write-Host ""
+        Write-Host "   > $upn" -ForegroundColor White
+        $item = [ordered]@{ Usuario = $upn; Emails = 0; Anexo = $false; Pasta = $false; Reuniao = $false; Contato = $false; OneDrive = 0; Observacao = "" }
+
+        if ($Modo -eq "Completo") {
+            try { Graph GET "v1.0/users/$upn/mailFolders/inbox?`$select=id" | Out-Null }
+            catch {
+                $item.Observacao = "sem caixa de e-mail (sem licença ou licença recente)"
+                Aviso $item.Observacao
+                $manifesto += [pscustomobject]$item
+                continue
+            }
+
+            function Novo-Email($pasta, $assunto, $texto, [switch]$ComAnexo) {
+                $m = @{
+                    subject      = $assunto
+                    body         = @{ contentType = "Text"; content = $texto }
+                    from         = @{ emailAddress = @{ address = "kit.validacao@$Tenant"; name = "Kit de validacao" } }
+                    toRecipients = @(@{ emailAddress = @{ address = $upn } })
+                    # PR_MESSAGE_FLAGS = 1: item recebido e lido (sem isso o Outlook trata como rascunho)
+                    singleValueExtendedProperties = @(@{ id = "Integer 0x0E07"; value = "1" })
+                }
+                if ($ComAnexo) { $m.attachments = @(@{ "@odata.type" = "#microsoft.graph.fileAttachment"; name = "anexo-teste.txt"; contentBytes = $anexoB64 }) }
+                Graph POST "v1.0/users/$upn/mailFolders/$pasta/messages" $m | Out-Null
+            }
+
+            1..$QtdEmails | ForEach-Object { Novo-Email "inbox" ("Teste migracao {0:D2}" -f $_) "E-mail $_ de $QtdEmails do kit de validacao."; $item.Emails++ }
+            Novo-Email "inbox" "Teste migracao - com anexo" "Este e-mail tem um anexo de texto." -ComAnexo
+            $item.Emails++; $item.Anexo = $true
+            Ok ("{0} e-mails na Caixa de Entrada, um com anexo" -f $item.Emails)
+
+            $pasta = @((Graph GET "v1.0/users/$upn/mailFolders?`$top=100").value | Where-Object { $_.displayName -eq "Projeto Nexus" })[0]
+            if (-not $pasta) { $pasta = Graph POST "v1.0/users/$upn/mailFolders" @{ displayName = "Projeto Nexus" } }
+            Novo-Email $pasta.id "Teste migracao - dentro da pasta" "Este e-mail fica na pasta Projeto Nexus."
+            $item.Emails++; $item.Pasta = $true
+            Ok "pasta Projeto Nexus com 1 e-mail"
+
+            $inicio = (Get-Date).Date.AddDays(7).AddHours(10)
+            Graph POST "v1.0/users/$upn/events" @{
+                subject = "Reuniao de validacao da migracao"
+                body    = @{ contentType = "Text"; content = "Evento do kit de validacao." }
+                start   = @{ dateTime = $inicio.ToString("yyyy-MM-ddTHH:mm:ss"); timeZone = $fuso }
+                end     = @{ dateTime = $inicio.AddHours(1).ToString("yyyy-MM-ddTHH:mm:ss"); timeZone = $fuso }
+            } | Out-Null
+            $item.Reuniao = $true
+            Ok ("reunião em {0:dd/MM} às 10:00" -f $inicio)
+
+            Graph POST "v1.0/users/$upn/contacts" @{
+                givenName = "Contato"; surname = "Validacao"; companyName = "Fornecedor Teste"
+                emailAddresses = @(@{ address = "contato.validacao@exemplo.com"; name = "Contato Validacao" })
+            } | Out-Null
+            $item.Contato = $true
+            Ok "contato pessoal"
+        }
+
+        # OneDrive
+        $limite = (Get-Date).AddMinutes($EsperaOneDriveMin); $pronto = $false
+        while (-not $pronto -and (Get-Date) -lt $limite) {
+            try { Graph GET "v1.0/users/$upn/drive?`$select=id" -Tentativas 1 | Out-Null; $pronto = $true }
+            catch { Info "OneDrive ainda sendo criado, nova tentativa em 1 min..."; Start-Sleep -Seconds 60 }
+        }
+        if ($pronto) {
+            try {
+                Graph PUT "v1.0/users/$upn/drive/root:/Kit-Validacao.txt:/content" "Arquivo na raiz do OneDrive." "text/plain" | Out-Null
+                $item.OneDrive++
+                Graph PUT "v1.0/users/$upn/drive/root:/Projeto%20Nexus/Planilha.csv:/content" "Item;Quantidade`nTeste;1" "text/plain" | Out-Null
+                $item.OneDrive++
+                Ok "2 arquivos no OneDrive (raiz e pasta Projeto Nexus)"
+            } catch { $item.Observacao = "erro no OneDrive: $($_.Exception.Message)"; Falha $item.Observacao }
+        } else {
+            $item.Observacao = "OneDrive não ficou pronto em $EsperaOneDriveMin min. Rode de novo com -Modo SoOneDrive -SemProvisionar."
+            Aviso $item.Observacao
+        }
         $manifesto += [pscustomobject]$item
-        continue
+    }
+    Write-Progress -Activity "Criando o kit" -Completed
+
+    # ----------------------------------------------------------- 6
+    Etapa 6 "Resumo e limpeza"
+    $sufixo  = if ($Modo -eq "SoOneDrive") { "-onedrive" } else { "" }
+    $arqCsv  = Join-Path $pastaBase ("kit-validacao-{0}{1}-{2}.csv" -f $Tenant.Split(".")[0], $sufixo, $carimbo)
+    $manifesto | Export-Csv $arqCsv -NoTypeInformation -Encoding UTF8
+
+    Write-Host ""
+    Write-Host ("   {0,-46} {1,7} {2,8} {3,8} {4,8}" -f "Conta", "E-mails", "Reunião", "Contato", "OneDrive") -ForegroundColor DarkGray
+    foreach ($i in $manifesto) {
+        $cor = if ($i.Observacao) { "Yellow" } else { "Green" }
+        $sn  = { param($v) if ($v) { "sim" } else { "-" } }
+        Write-Host ("   {0,-46} {1,7} {2,8} {3,8} {4,8}" -f $i.Usuario, $i.Emails, (& $sn $i.Reuniao), (& $sn $i.Contato), $i.OneDrive) -ForegroundColor $cor
+        if ($i.Observacao) { Write-Host "      $($i.Observacao)" -ForegroundColor Yellow }
     }
 
-    function Novo-Email($pasta, $assunto, $texto, [switch]$ComAnexo) {
-        $m = @{
-            subject      = $assunto
-            body         = @{ contentType = "Text"; content = $texto }
-            from         = @{ emailAddress = @{ address = "admin@$Tenant"; name = "Lab Migracao" } }
-            toRecipients = @(@{ emailAddress = @{ address = $upn } })
-            # PR_MESSAGE_FLAGS = 1: item recebido e lido (sem isso o Outlook trata como rascunho)
-            singleValueExtendedProperties = @(@{ id = "Integer 0x0E07"; value = "1" })
-        }
-        if ($ComAnexo) {
-            $m.attachments = @(@{ "@odata.type" = "#microsoft.graph.fileAttachment"; name = "anexo-teste.txt"; contentBytes = $anexoB64 })
-        }
-        Graph POST "v1.0/users/$upn/mailFolders/$pasta/messages" $m | Out-Null
+    try {
+        Graph DELETE "v1.0/applications/$($app.id)" -Tentativas 2 | Out-Null
+        $app = $null
+        Write-Host ""
+        Ok "app temporário apagado"
+    } catch { Aviso "o app não conseguiu se apagar sozinho; vou pedir login de admin" }
+    Disconnect-MgGraph | Out-Null
+
+    if ($app) {
+        Connect-MgGraph -TenantId $Tenant -Scopes "Application.ReadWrite.All" -NoWelcome
+        Graph DELETE "v1.0/applications/$($app.id)" | Out-Null
+        Disconnect-MgGraph | Out-Null
+        $app = $null
+        Ok "app temporário apagado"
     }
 
-    if (-not $SoOneDrive) {
-    # E-mails numerados na caixa de entrada
-    1..3 | ForEach-Object {
-        Novo-Email "inbox" ("Teste migracao {0:D2}" -f $_) "E-mail $_ de 3 do kit de validacao."
-        $item.Emails++
-    }
-    # E-mail com anexo
-    Novo-Email "inbox" "Teste migracao 04 - com anexo" "Este e-mail tem um anexo de texto." -ComAnexo
-    $item.Emails++; $item.Anexo = $true
-
-    # Pasta com um e-mail dentro
-    $pastaExistente = @((Graph GET "v1.0/users/$upn/mailFolders?`$top=100").value | Where-Object { $_.displayName -eq "Projeto Nexus" })
-    $pasta = if ($pastaExistente) { $pastaExistente[0] } else { Graph POST "v1.0/users/$upn/mailFolders" @{ displayName = "Projeto Nexus" } }
-    Novo-Email $pasta.id "Teste migracao 05 - dentro da pasta" "Este e-mail fica na pasta Projeto Nexus."
-    $item.Emails++; $item.Pasta = $true
-
-    # Reuniao na semana que vem
-    $inicio = (Get-Date).Date.AddDays(7).AddHours(10)
-    Graph POST "v1.0/users/$upn/events" @{
-        subject = "Reuniao de validacao da migracao"
-        body    = @{ contentType = "Text"; content = "Evento do kit de validacao." }
-        start   = @{ dateTime = $inicio.ToString("yyyy-MM-ddTHH:mm:ss"); timeZone = $fuso }
-        end     = @{ dateTime = $inicio.AddHours(1).ToString("yyyy-MM-ddTHH:mm:ss"); timeZone = $fuso }
-    } | Out-Null
-    $item.Reuniao = $true
-
-    # Contato pessoal
-    Graph POST "v1.0/users/$upn/contacts" @{
-        givenName      = "Contato"
-        surname        = "Validacao"
-        companyName    = "Fornecedor Teste"
-        emailAddresses = @(@{ address = "contato.validacao@exemplo.com"; name = "Contato Validacao" })
-    } | Out-Null
-    $item.Contato = $true
-
-    }
-
-    # OneDrive: um arquivo na raiz e uma pasta com um arquivo
-    if (-not (Esperar-OneDrive $upn)) {
-        $item.Observacao = "OneDrive nao ficou pronto em $EsperaOneDriveMin min. Rode com -SoOneDrive -SemProvisionar depois."
-        Write-Host "   $($item.Observacao)" -ForegroundColor Yellow
-    } else { try {
-        Graph PUT "v1.0/users/$upn/drive/root:/Kit-Validacao.txt:/content" "Arquivo na raiz do OneDrive." "text/plain" | Out-Null
-        $item.OneDrive++
-        Graph PUT "v1.0/users/$upn/drive/root:/Projeto%20Nexus/Planilha.csv:/content" "Item;Quantidade`nTeste;1" "text/plain" | Out-Null
-        $item.OneDrive++
-    } catch {
-        $item.Observacao = "Erro ao gravar no OneDrive: $($_.Exception.Message)"
-        Write-Host "   $($item.Observacao)" -ForegroundColor Yellow
-    } }
-
-    Write-Host "   ok: $($item.Emails) e-mails, $($item.OneDrive) arquivos no OneDrive" -ForegroundColor Green
-    $manifesto += [pscustomobject]$item
+    Write-Host ""
+    Linha "═" "DarkCyan"
+    Write-Host "   PRONTO" -ForegroundColor Green
+    Campo "Manifesto" $arqCsv
+    Campo "Log"       $arqLog
+    Linha "═" "DarkCyan"
 }
-
-$sufixo  = if ($SoOneDrive) { "-onedrive" } else { "" }
-$arquivo = Join-Path (Get-Location) "kit-validacao-$($Tenant.Split('.')[0])$sufixo.csv"
-$manifesto | Export-Csv $arquivo -NoTypeInformation -Encoding UTF8
-$manifesto | Format-Table -AutoSize
-Write-Host "Manifesto salvo em $arquivo"
-Disconnect-MgGraph | Out-Null
-
-# ---------------------------------------------------------------- 4. Limpeza
-Write-Host "`n[4/4] Login de admin de novo para apagar o app temporario..." -ForegroundColor Cyan
-Connect-MgGraph -TenantId $Tenant -Scopes "Application.ReadWrite.All" -NoWelcome
-Graph DELETE "v1.0/applications/$($app.id)" | Out-Null
-Disconnect-MgGraph | Out-Null
-Write-Host "   app apagado. Fim." -ForegroundColor Green
-
-Read-Host "`nPressione Enter para fechar"
+catch {
+    if ($_.Exception.Message -ne "ENCERRADO") {
+        Write-Host ""
+        Falha "erro: $($_.Exception.Message)"
+        Info "detalhes completos no log: $arqLog"
+    }
+    if ($app) {
+        Aviso "o app temporário '$($app.displayName)' pode ter ficado no tenant."
+        Aviso "Apague em Entra ID > App registrations > All applications."
+    }
+}
+finally {
+    try { Disconnect-MgGraph -ErrorAction SilentlyContinue | Out-Null } catch { }
+    try { Stop-Transcript | Out-Null } catch { }
+    Write-Host ""
+    Read-Host "   Pressione Enter para fechar" | Out-Null
+}
