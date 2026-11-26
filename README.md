@@ -479,6 +479,9 @@ $vms | Where-Object FullName -match 'ODMAD' | ForEach-Object { & $vmrun -T ws st
 | `02 - Sync validado, antes do ODM` | As 6 | Sincronização validada, 10 de 10 IDs iguais |
 | `03 - ODMAD reparada, 6GB-4vCPU, antes do agente` | As duas `SRV-ODMAD` | Discos reparados e hardware ajustado |
 | `04 - Agentes Directory Sync instalados` | As duas `SRV-ODMAD` | Agentes instalados e conectados (ver Fase 8) |
+| `05 - Pre-requisitos SID History prontos` | As 6 | Grupo `ACME$$$`, auditoria, trust e pasta de teste prontos (ver Fase 9) |
+| `05 - Antes do Write SID History` | Os dois DCs | Workflow validado em Test Mode, antes da execução real (ver Fase 10) |
+| `06 - SID History validado, escopo ajustado` | As 6 | Migração com SID History validada e escopo do Entra Connect corrigido (ver Fase 11). Tirado com todas as VMs desligadas, pelo mesmo script |
 
 > [!TIP]
 > Com a VM ligada, o snapshot salva também a memória. O das `SRV-ODMAD`, com 6 GB, levou uns 8 minutos, e o `vmrun` não mostra progresso nem devolveu o prompt no final. Para saber se estava andando, olhei os arquivos da pasta da VM: quando o `.vmem` do snapshot chegou a 6144 MB e o `.vmsn` foi gravado, o snapshot já estava pronto. Com a VM desligada, leva segundos.
