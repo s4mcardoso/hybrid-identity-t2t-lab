@@ -128,11 +128,11 @@ try {
 
     if (-not $Modo) {
         Write-Host ""
-        Write-Host "   O que você quer fazer?" -ForegroundColor White
+        Write-Host $(if ($Simular) { "   O que você quer simular?" } else { "   O que você quer fazer?" }) -ForegroundColor White
         Write-Host ""
         Write-Host "     [1]  Kit completo   " -ForegroundColor Cyan -NoNewline; Write-Host "e-mails, pasta, anexo, reunião, contato e OneDrive" -ForegroundColor Gray
         Write-Host "     [2]  Só OneDrive    " -ForegroundColor Cyan -NoNewline; Write-Host "quando os e-mails já foram criados antes" -ForegroundColor Gray
-        Write-Host "     [3]  Simular        " -ForegroundColor Magenta -NoNewline; Write-Host "mostra tudo o que seria feito, sem login e sem mudar nada" -ForegroundColor Gray
+        if (-not $Simular) { Write-Host "     [3]  Simular        " -ForegroundColor Magenta -NoNewline; Write-Host "mostra tudo o que seria feito, sem login e sem mudar nada" -ForegroundColor Gray }
         Write-Host "     [0]  Sair" -ForegroundColor Cyan
         switch (Pergunta "Opção:") {
             "1"     { $Modo = "Completo" }
