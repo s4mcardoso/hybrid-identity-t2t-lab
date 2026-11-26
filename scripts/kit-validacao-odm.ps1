@@ -121,7 +121,14 @@ $pastaLog  = Join-Path $pastaBase "logs"
 New-Item -ItemType Directory -Path $pastaLog -Force | Out-Null
 $arqLog    = Join-Path $pastaLog "kit-validacao-$carimbo.log"
 Start-Transcript -Path $arqLog | Out-Null
+$simParam = [bool]$Simular
+$primeira = $true
+$sair     = $false
+
+do {
 $app = $null
+if (-not $primeira) { $Modo = $null; $Simular = $simParam }
+$primeira = $false
 
 try {
     Banner
@@ -138,7 +145,7 @@ try {
             "1"     { $Modo = "Completo" }
             "2"     { $Modo = "SoOneDrive" }
             "3"     { $Modo = "Completo"; $Simular = $true; Banner }
-            default { Encerrar "Nada foi feito." }
+            default { $sair = $true; Encerrar "Até a próxima." }
         }
     }
     if ($Simular -and ($Tenant -like "*__*" -or -not $Tenant)) { $Tenant = "contoso.onmicrosoft.com" }
@@ -419,7 +426,13 @@ catch {
 }
 finally {
     if (-not $Simular) { try { Disconnect-MgGraph -ErrorAction SilentlyContinue | Out-Null } catch { } }
-    try { Stop-Transcript | Out-Null } catch { }
-    Write-Host ""
-    Read-Host "   Pressione Enter para fechar" | Out-Null
 }
+
+if ($sair) { break }
+Write-Host ""
+Write-Host "   [M] " -ForegroundColor Cyan -NoNewline; Write-Host "Voltar ao menu     " -ForegroundColor Gray -NoNewline
+Write-Host "[Enter] " -ForegroundColor Cyan -NoNewline; Write-Host "Sair" -ForegroundColor Gray
+$resposta = Pergunta "Opção:"
+} while ($resposta -match "^[mM]")
+
+try { Stop-Transcript | Out-Null } catch { }
