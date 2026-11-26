@@ -26,8 +26,12 @@
 
 .EXAMPLE
     .\kit-validacao-odm.ps1 -Modo SoOneDrive -Usuarios teste.nexus1,teste.nexus2
+
+.EXAMPLE
+    .\kit-validacao-odm.ps1 -WhatIf
+    Simulação: mostra todas as telas e o que seria feito, sem login e sem mudar nada.
 #>
-[CmdletBinding()]
+[CmdletBinding(SupportsShouldProcess = $true)]
 param(
     [string]   $Tenant        = "__ORIGEM__",
     [string]   $TenantDestino = "__DESTINO__",
@@ -38,10 +42,13 @@ param(
     [ValidateRange(1, 50)]
     [int]      $QtdEmails = 3,
     [switch]   $SemProvisionar,
+    # Mostra tudo o que seria feito, sem login e sem mudar nada (o mesmo que -WhatIf)
+    [switch]   $Simular,
     [int]      $EsperaOneDriveMin = 40
 )
 
 $ErrorActionPreference = "Stop"
+if ($WhatIfPreference) { $Simular = $true; $WhatIfPreference = $false }
 try { $Host.UI.RawUI.WindowTitle = "Kit de validação · piloto ODM M365" } catch { }
 
 # =============================================================== visual
@@ -55,7 +62,12 @@ function Banner {
     Write-Host "   Conteúdo conhecido nas contas de teste, para conferir a migração" -ForegroundColor Gray
     Linha "═" "DarkCyan"
     Write-Host "   Use só em tenant de laboratório ou com aprovação do cliente." -ForegroundColor DarkYellow
+    if ($script:Simular) {
+        Write-Host ""
+        Write-Host "   >>> MODO SIMULAÇÃO: nenhum login, nenhuma mudança <<<" -ForegroundColor Magenta
+    }
 }
+function Sim([string]$t) { Write-Host "   [SIM ] $t" -ForegroundColor Magenta }
 function Etapa([int]$n, [string]$texto) {
     Write-Host ""
     Write-Host ("  {0}/6  {1}" -f $n, $texto.ToUpper()) -ForegroundColor Cyan
@@ -120,13 +132,17 @@ try {
         Write-Host ""
         Write-Host "     [1]  Kit completo   " -ForegroundColor Cyan -NoNewline; Write-Host "e-mails, pasta, anexo, reunião, contato e OneDrive" -ForegroundColor Gray
         Write-Host "     [2]  Só OneDrive    " -ForegroundColor Cyan -NoNewline; Write-Host "quando os e-mails já foram criados antes" -ForegroundColor Gray
+        Write-Host "     [3]  Simular        " -ForegroundColor Magenta -NoNewline; Write-Host "mostra tudo o que seria feito, sem login e sem mudar nada" -ForegroundColor Gray
         Write-Host "     [0]  Sair" -ForegroundColor Cyan
         switch (Pergunta "Opção:") {
             "1"     { $Modo = "Completo" }
             "2"     { $Modo = "SoOneDrive" }
+            "3"     { $Modo = "Completo"; $Simular = $true; Banner }
             default { Encerrar "Nada foi feito." }
         }
     }
+    if ($Simular -and ($Tenant -like "*__*" -or -not $Tenant)) { $Tenant = "contoso.onmicrosoft.com" }
+    if ($Simular -and $TenantDestino -like "*__*") { $TenantDestino = "fabrikam.onmicrosoft.com" }
     if ($Tenant -like "*__*" -or -not $Tenant) {
         $Tenant = Pergunta "Tenant de ORIGEM (ex.: contoso.onmicrosoft.com):"
     }
@@ -135,25 +151,33 @@ try {
     }
 
     foreach ($m in "Microsoft.Graph.Authentication", "Microsoft.Online.SharePoint.PowerShell") {
+        if ($Simular) { break }
         if ($m -like "*SharePoint*" -and $SemProvisionar) { continue }
         if (-not (Get-Module -ListAvailable $m)) {
             Info "instalando o módulo $m (só na primeira vez)..."
             Install-Module $m -Scope CurrentUser -Force -AllowClobber
         }
     }
-    Import-Module Microsoft.Graph.Authentication
+    if (-not $Simular) { Import-Module Microsoft.Graph.Authentication }
 
     # ----------------------------------------------------------- 1
     Etapa 1 "Conectar e confirmar o tenant"
-    Info "abrindo o login. Use a conta de ADMIN do tenant de origem (clique em 'Usar outra conta' se precisar)."
-    Connect-MgGraph -TenantId $Tenant -NoWelcome -Scopes `
-        "Application.ReadWrite.All", "AppRoleAssignment.ReadWrite.All", "User.Read.All", "Organization.Read.All"
-    $org = (Graph GET "v1.0/organization?`$select=displayName,verifiedDomains").value[0]
-    $dominioInicial = ($org.verifiedDomains | Where-Object { $_.isInitial }).name
+    if ($Simular) {
+        Sim "abriria o login de admin do $Tenant"
+        $nomeOrg = "Contoso (simulação)"; $dominioInicial = $Tenant; $conta = "admin@$Tenant"
+    } else {
+        Info "abrindo o login. Use a conta de ADMIN do tenant de origem (clique em 'Usar outra conta' se precisar)."
+        Connect-MgGraph -TenantId $Tenant -NoWelcome -Scopes `
+            "Application.ReadWrite.All", "AppRoleAssignment.ReadWrite.All", "User.Read.All", "Organization.Read.All"
+        $org = (Graph GET "v1.0/organization?`$select=displayName,verifiedDomains").value[0]
+        $nomeOrg = $org.displayName
+        $dominioInicial = ($org.verifiedDomains | Where-Object { $_.isInitial }).name
+        $conta = (Get-MgContext).Account
+    }
     Write-Host ""
-    Campo "Organização"  $org.displayName
+    Campo "Organização"  $nomeOrg
     Campo "Tenant"       $dominioInicial
-    Campo "Conta"        (Get-MgContext).Account
+    Campo "Conta"        $conta
     Campo "Modo"         $(if ($Modo -eq "Completo") { "Kit completo" } else { "Só OneDrive" })
     if ($TenantDestino) { Campo "Destino" $TenantDestino }
     if ((Pergunta "É esse o tenant certo? (S/N):") -notmatch "^[sS]") { Encerrar "Cancelado antes de qualquer mudança." }
@@ -165,13 +189,18 @@ try {
     } elseif ($Usuarios) {
         $nomes = $Usuarios
     } else {
-        Info "carregando os usuários do tenant..."
-        $lista = Todos "v1.0/users?`$select=displayName,userPrincipalName,assignedLicenses&`$top=999" |
-            ForEach-Object { [pscustomobject]@{
-                Nome      = $_.displayName
-                UPN       = $_.userPrincipalName
-                Licenciado = $(if ($_.assignedLicenses.Count -gt 0) { "Sim" } else { "Não" })
-            } } | Sort-Object Nome
+        if ($Simular) {
+            $lista = 1..6 | ForEach-Object { [pscustomobject]@{
+                Nome = "Usuário Exemplo $_"; UPN = "exemplo$_@$Tenant"; Licenciado = $(if ($_ -le 4) { "Sim" } else { "Não" }) } }
+        } else {
+            Info "carregando os usuários do tenant..."
+            $lista = Todos "v1.0/users?`$select=displayName,userPrincipalName,assignedLicenses&`$top=999" |
+                ForEach-Object { [pscustomobject]@{
+                    Nome       = $_.displayName
+                    UPN        = $_.userPrincipalName
+                    Licenciado = $(if ($_.assignedLicenses.Count -gt 0) { "Sim" } else { "Não" })
+                } } | Sort-Object Nome
+        }
         Info "uma janela com a lista vai abrir. Selecione as contas (Ctrl + clique) e clique em OK."
         $nomes = ($lista | Out-GridView -Title "Kit de validação: escolha as contas de teste e clique em OK" -OutputMode Multiple).UPN
     }
@@ -184,8 +213,12 @@ try {
 
     # ----------------------------------------------------------- 3
     Etapa 3 "Preparar o acesso (app temporário)"
+    $perms = "Mail.ReadWrite", "Calendars.ReadWrite", "Contacts.ReadWrite", "Files.ReadWrite.All", "Application.ReadWrite.OwnedBy"
+    if ($Simular) {
+        Sim "criaria o app 'Kit-Validacao-ODM (temporario)' com segredo válido por 2 horas"
+        Sim ("daria a ele: " + ($perms -join ", "))
+    } else {
     $graphSp = Graph GET "v1.0/servicePrincipals(appId='00000003-0000-0000-c000-000000000000')"
-    $perms   = "Mail.ReadWrite", "Calendars.ReadWrite", "Contacts.ReadWrite", "Files.ReadWrite.All", "Application.ReadWrite.OwnedBy"
     $roles   = $graphSp.appRoles | Where-Object { $_.value -in $perms -and $_.allowedMemberTypes -contains "Application" }
     $app = Graph POST "v1.0/applications" @{
         displayName            = "Kit-Validacao-ODM (temporario, apagar se encontrar)"
@@ -204,11 +237,14 @@ try {
     Disconnect-MgGraph | Out-Null
     Ok "app criado, com segredo válido por 2 horas"
     Info ("permissões: " + ($perms -join ", "))
+    }
 
     # ----------------------------------------------------------- 4
     Etapa 4 "Pedir os OneDrives (origem e destino)"
     if ($SemProvisionar) {
         Info "pulado (-SemProvisionar)"
+    } elseif ($Simular) {
+        foreach ($t in @($Tenant, $TenantDestino) | Where-Object { $_ }) { Sim "pediria os OneDrives das contas escolhidas no $t (login de admin do SharePoint)" }
     } else {
         Import-Module Microsoft.Online.SharePoint.PowerShell -DisableNameChecking
         $prefixos = $upns | ForEach-Object { $_.Split("@")[0] }
@@ -223,10 +259,12 @@ try {
 
     # ----------------------------------------------------------- 5
     Etapa 5 "Criar o conteúdo"
-    $falta = 60 - [int]((Get-Date) - $criadoEm).TotalSeconds
-    if ($falta -gt 0) { Info "esperando $falta s para as permissões do app valerem..."; Start-Sleep -Seconds $falta }
-    $cred = New-Object System.Management.Automation.PSCredential($app.appId, (ConvertTo-SecureString $segredo.secretText -AsPlainText -Force))
-    Connect-MgGraph -TenantId $Tenant -ClientSecretCredential $cred -NoWelcome
+    if (-not $Simular) {
+        $falta = 60 - [int]((Get-Date) - $criadoEm).TotalSeconds
+        if ($falta -gt 0) { Info "esperando $falta s para as permissões do app valerem..."; Start-Sleep -Seconds $falta }
+        $cred = New-Object System.Management.Automation.PSCredential($app.appId, (ConvertTo-SecureString $segredo.secretText -AsPlainText -Force))
+        Connect-MgGraph -TenantId $Tenant -ClientSecretCredential $cred -NoWelcome
+    }
 
     $fuso     = "E. South America Standard Time"
     $anexoB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("Anexo de teste do kit de validacao. Se este texto chegou inteiro, o anexo migrou."))
@@ -239,6 +277,20 @@ try {
         Write-Host ""
         Write-Host "   > $upn" -ForegroundColor White
         $item = [ordered]@{ Usuario = $upn; Emails = 0; Anexo = $false; Pasta = $false; Reuniao = $false; Contato = $false; OneDrive = 0; Observacao = "" }
+
+        if ($Simular) {
+            if ($Modo -eq "Completo") {
+                Sim ("criaria {0} e-mails na Caixa de Entrada, um com anexo" -f ($QtdEmails + 1)); Start-Sleep -Milliseconds 250
+                Sim "criaria a pasta Projeto Nexus com 1 e-mail";                                   Start-Sleep -Milliseconds 250
+                Sim ("criaria uma reunião em {0:dd/MM} às 10:00" -f (Get-Date).Date.AddDays(7));      Start-Sleep -Milliseconds 250
+                Sim "criaria um contato pessoal";                                                     Start-Sleep -Milliseconds 250
+                $item.Emails = $QtdEmails + 2; $item.Anexo = $true; $item.Pasta = $true; $item.Reuniao = $true; $item.Contato = $true
+            }
+            Sim "gravaria 2 arquivos no OneDrive (raiz e pasta Projeto Nexus)"; Start-Sleep -Milliseconds 250
+            $item.OneDrive = 2
+            $manifesto += [pscustomobject]$item
+            continue
+        }
 
         if ($Modo -eq "Completo") {
             try { Graph GET "v1.0/users/$upn/mailFolders/inbox?`$select=id" | Out-Null }
@@ -317,7 +369,7 @@ try {
     Etapa 6 "Resumo e limpeza"
     $sufixo  = if ($Modo -eq "SoOneDrive") { "-onedrive" } else { "" }
     $arqCsv  = Join-Path $pastaBase ("kit-validacao-{0}{1}-{2}.csv" -f $Tenant.Split(".")[0], $sufixo, $carimbo)
-    $manifesto | Export-Csv $arqCsv -NoTypeInformation -Encoding UTF8
+    if ($Simular) { $arqCsv = "(não gerado na simulação)" } else { $manifesto | Export-Csv $arqCsv -NoTypeInformation -Encoding UTF8 }
 
     Write-Host ""
     Write-Host ("   {0,-46} {1,7} {2,8} {3,8} {4,8}" -f "Conta", "E-mails", "Reunião", "Contato", "OneDrive") -ForegroundColor DarkGray
@@ -328,6 +380,7 @@ try {
         if ($i.Observacao) { Write-Host "      $($i.Observacao)" -ForegroundColor Yellow }
     }
 
+    if ($Simular) { Write-Host ""; Sim "apagaria o app temporário" } else {
     try {
         Graph DELETE "v1.0/applications/$($app.id)" -Tentativas 2 | Out-Null
         $app = $null
@@ -343,10 +396,12 @@ try {
         $app = $null
         Ok "app temporário apagado"
     }
+    }
 
     Write-Host ""
     Linha "═" "DarkCyan"
-    Write-Host "   PRONTO" -ForegroundColor Green
+    if ($Simular) { Write-Host "   SIMULAÇÃO CONCLUÍDA: nada foi alterado" -ForegroundColor Magenta }
+    else          { Write-Host "   PRONTO" -ForegroundColor Green }
     Campo "Manifesto" $arqCsv
     Campo "Log"       $arqLog
     Linha "═" "DarkCyan"
@@ -363,7 +418,7 @@ catch {
     }
 }
 finally {
-    try { Disconnect-MgGraph -ErrorAction SilentlyContinue | Out-Null } catch { }
+    if (-not $Simular) { try { Disconnect-MgGraph -ErrorAction SilentlyContinue | Out-Null } catch { } }
     try { Stop-Transcript | Out-Null } catch { }
     Write-Host ""
     Read-Host "   Pressione Enter para fechar" | Out-Null
