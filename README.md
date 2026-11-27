@@ -985,11 +985,10 @@ O `immutableId` é igual nos dois tenants porque os dois Entra Connect usam o `m
 
 ![Contas casadas no ODM](docs/img/56-odm-contas-casadas.png)
 
-As três contas terminaram casadas com o par certo. O Teste Nexus 3, mapeado por arquivo, ficou sem *Target Type*: o Map grava o par sem ler a conta do destino. Um *Refresh Selected Accounts* completa esses dados antes da migração.
+As três contas terminaram casadas com o par certo. Logo depois do Map, o Teste Nexus 3 apareceu sem *Target Type*, e alguns minutos depois o ODM preencheu o campo sozinho, com *Mailbox-Enabled*. Se ele tivesse continuado vazio, seria sinal de UPN errado no arquivo.
 
 #### Próximos passos desta fase
 
-- Refresh do Teste Nexus 3 e conferência do *Target Type*.
 - Migração de e-mail e OneDrive dos três usuários.
 - Conferência do conteúdo no destino contra o manifesto do kit de validação.
 
@@ -1401,7 +1400,7 @@ A aba *Tasks* mostrou a sequência: Discovery com falha, Match com falha, Refres
 34. **Antes de corrigir, conferir o estado atual.** A função que o erro pedia já estava atribuída, e o problema era só tempo.
 35. **Validar migração é comparar o que tinha com o que chegou.** Conteúdo pequeno e conhecido, criado por script, vale mais que caixas cheias de dados de demonstração.
 36. **O `immutableId` igual nos dois tenants é o que torna o Match seguro.** A estratégia de identidade do Entra Connect foi a base do casamento no ODM.
-37. **Map from File grava o par sem conferir o destino.** Depois dele, um refresh e a conferência do *Target Type*.
+37. **Depois de um Map from File, conferir o *Target Type* alguns minutos depois.** O ODM completa os dados do destino em segundo plano; se o campo continuar vazio, o UPN do arquivo provavelmente está errado.
 38. **A aba Tasks é o diário do projeto.** A causa de uma falha costuma estar numa tarefa anterior.
 
 ---

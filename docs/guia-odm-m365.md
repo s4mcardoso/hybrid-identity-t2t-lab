@@ -139,7 +139,7 @@ teste.nexus3@<tenant-origem>.onmicrosoft.com,teste.nexus3@<tenant-b>.onmicrosoft
 
 Também existe o formato `SourceObjectId,TargetObjectId`, mais resistente a mudança de nome.
 
-O Map grava o par sem ler a conta do destino. Depois dele, o Teste Nexus 3 ficou com o **Target Type** vazio, enquanto os casados por Match já mostravam *Mailbox-Enabled*. Um erro de digitação no UPN só apareceria na migração. Por isso, depois de um Map, vale um **Refresh Selected Accounts** e a conferência do Target Type.
+Logo depois do Map, o Teste Nexus 3 apareceu com o **Target Type** vazio, enquanto os casados por Match já mostravam *Mailbox-Enabled*. Alguns minutos depois, sem nenhuma ação, o campo foi preenchido: o ODM completa os dados do destino em segundo plano. Por isso, depois de um Map, a regra é conferir o **Target Type** depois de alguns minutos. Se ele continuar vazio, o par provavelmente tem um UPN errado no arquivo, e aí um **Refresh Selected Accounts** confirma.
 
 ### Resultado do piloto
 
