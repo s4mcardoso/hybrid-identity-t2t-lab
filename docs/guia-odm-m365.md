@@ -298,6 +298,21 @@ Esta tela cuida do que não é conteúdo: regras, delegações, permissões e co
 
 Depois do corte, cuidado com nova passada de *Rules*: ela apaga as regras do destino antes de copiar, então apagaria uma regra que o usuário já criou na caixa nova.
 
+#### Por que Auto Reply e Litigation Hold ficam para o corte
+
+Entre a pré-carga e o corte passam semanas, e o usuário continua trabalhando na origem.
+
+**Auto Reply.** A pré-carga copia a resposta automática daquele dia. Se o usuário muda ou desliga a mensagem depois, o destino fica com a versão velha. E se a resposta ficar ligada no destino antes do corte, um e-mail que chegue lá recebe resposta das duas caixas. Na passada do corte vale o estado real: quem está de férias naquele fim de semana continua com a resposta funcionando na caixa nova.
+
+**Litigation Hold.** A retenção existe para nada ser apagado de verdade, e isso briga com a migração:
+- cada delta atualiza itens, e com a retenção ligada as versões antigas ficam guardadas, então a caixa incha a cada passada;
+- se uma passada sai errada e é preciso limpar e migrar de novo, a retenção guarda o que foi apagado;
+- se o jurídico liga ou desliga uma retenção durante o projeto, o que vale é o estado no dia do corte.
+
+Durante o projeto a caixa continua protegida, porque a origem segue com a retenção ligada. O destino só precisa dela quando vira a caixa oficial.
+
+**Regra geral:** conteúdo (e-mail, agenda, contatos, regras, permissões) migra cedo e vai sendo atualizado nos deltas. Estado ou política da caixa (resposta automática, retenção) migra no corte, porque vale o que estiver ligado no dia da virada.
+
 ---
 
 *As próximas telas do assistente vão entrando aqui.*
