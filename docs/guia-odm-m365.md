@@ -245,6 +245,12 @@ A caixa do destino só existe se a conta tiver licença com Exchange Online. Est
 | **Archive → Primary** | Quando o destino não vai usar arquivo morto | Empresa que decidiu acabar com o arquivo morto na nova estrutura |
 | **Primary → Archive** | Mandar parte da caixa principal direto para o arquivo, junto com o filtro de datas | Diretor com caixa perto do limite: o que tem mais de dois anos vai para o arquivo |
 
+> [!CAUTION]
+> **Migrate Safe Sender and Blocked List deixa a migração muito mais lenta.**
+> Ao marcar, o próprio ODM avisa: *"Selecting this option will significantly slow down the migration."*
+> Não marque na pré-carga nem nos deltas. Marque **só na passada final (corte)**.
+> Também não deixe de marcar no corte: sem a lista, e-mail bom volta a cair no lixo eletrônico e vira chamado.
+
 **O que migrar:**
 
 | Opção | O que faz | Quando marcar |
