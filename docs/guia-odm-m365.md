@@ -263,6 +263,41 @@ A caixa do destino só existe se a conta tiver licença com Exchange Online. Est
 
 **Padrão que uso:** Primary → Primary; os quatro tipos de conteúdo; Safe Sender e Refresh marcados; Recoverable Items só com pedido formal; Reset desmarcado. Se a origem tiver arquivo morto, crio uma segunda tarefa Archive → Archive depois da principal.
 
+### Migration Settings (tela 4)
+
+![Migration Settings](img/60-migrate-mail-settings.png)
+
+Esta tela cuida do que não é conteúdo: regras, delegações, permissões e configurações da caixa. É onde o usuário mais sente falta de algo depois do corte.
+
+| Opção | O que faz | Cuidado |
+|---|---|---|
+| **Migrate Mailbox Rules** | Migra as regras da caixa | Apaga as regras que já existem no destino antes de copiar. O Autodiscover do destino precisa funcionar. Regras com condição não suportada precisam ser refeitas à mão |
+| **Migrate Mailbox Delegation** | Migra os delegados (quem gerencia a agenda ou a caixa de outra pessoa) | O delegado precisa existir e estar casado no destino, senão dá erro |
+| **Enable Automapping for shared mailboxes** | A caixa compartilhada aparece sozinha no Outlook de quem tem acesso total | O usuário não consegue fechar essa caixa no Outlook. Só o admin tira |
+| **Migrate Folder Permissions** | Migra as permissões de pasta, como calendário compartilhado | Se a permissão já existir no destino, fica a mais aberta das duas |
+| **Migrate Auto Reply** | Migra a resposta automática e a configuração dela | |
+| **Migrate Litigation Hold Settings** | Liga a retenção no destino quando ela está ligada na origem | Precisa de licença que suporte retenção. A Quest recomenda usar só na última passada, para a pasta de itens recuperáveis não crescer a cada delta |
+| **Synchronize x500 Addresses** | Copia e sincroniza os endereços X500 | Vem marcada. Sem ela, responder e-mail ou reunião antiga pode voltar com NDR, e o X500 teria que ser feito à mão |
+| **Synchronize Calendar Deletes** | Reunião apagada na origem também some no destino | Vem marcada e só aparece com Migrate Calendar ligado |
+
+**Exemplos:**
+- Diretoria com secretárias que cuidam da agenda dos diretores: *Delegation* marcado, e o diretor e a secretária precisam estar na mesma onda de migração. Se a secretária migra uma semana depois, a delegação dá erro.
+- Setor financeiro com caixa compartilhada "financeiro@": *Automapping* marcado, para a caixa aparecer sozinha no Outlook de todo o time no primeiro dia.
+- Empresa que tem muito usuário com regra de mover e-mail de fornecedor para pasta: *Rules* marcado. É a reclamação número um quando falta.
+- Escritório de advocacia com caixas em retenção: *Litigation Hold* marcado só na passada final, com a licença do destino conferida antes.
+- Corte marcado para o fim de semana em que metade do time está de férias: *Auto Reply* marcado na passada do corte, para as respostas de férias continuarem funcionando no destino.
+
+**Padrão que uso:**
+
+| Opção | Pré-carga e deltas | Passada final (corte) |
+|---|---|---|
+| Rules, Delegation, Automapping, Folder Permissions | ✅ | ✅ |
+| Auto Reply | ❌ | ✅ |
+| Litigation Hold | ❌ | ✅ se a origem tiver retenção |
+| x500 e Calendar Deletes | ✅ | ✅ |
+
+Depois do corte, cuidado com nova passada de *Rules*: ela apaga as regras do destino antes de copiar, então apagaria uma regra que o usuário já criou na caixa nova.
+
 ---
 
 *As próximas telas do assistente vão entrando aqui.*
