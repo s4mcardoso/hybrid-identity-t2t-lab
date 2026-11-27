@@ -297,9 +297,35 @@ function Escolher-Camadas {
 }
 
 # ---------------------------------------------------------------- acesso
+function Tentar-Login([string]$nome, [scriptblock]$acao) {
+    while ($true) {
+        try { & $acao; return }
+        catch {
+            Aviso "o login do $nome não foi concluído: $($_.Exception.Message)"
+            Info "a janela de login às vezes abre atrás das outras janelas: confira com Alt+Tab."
+            if ((Pergunta "Tentar o login de novo? (S/N):") -notmatch "^[sS]") { throw }
+        }
+    }
+}
+function Limpar-AppsEsquecidos {
+    # roda com o login de admin: procura apps temporários que ficaram de execuções interrompidas
+    $velhos = @()
+    try { $velhos = @((Graph GET ("v1.0/applications?`$filter=" + (Url "startswith(displayName,'Kit-Validacao-ODM')") + "&`$select=id,displayName,createdDateTime") -Tentativas 2).value) } catch { return }
+    if (-not $velhos.Count) { return }
+    Write-Host ""
+    Aviso ("encontrei {0} app(s) temporário(s) de execuções anteriores que ficaram no tenant:" -f $velhos.Count)
+    foreach ($v in $velhos) { Write-Host ("        {0}  (criado em {1})" -f $v.displayName, (Dt (ParaData $v.createdDateTime))) -ForegroundColor Yellow }
+    Info "se outra pessoa estiver rodando o kit neste tenant agora, responda N."
+    if ((Pergunta "Apagar esses apps? (S/N):") -match "^[sS]") {
+        foreach ($v in $velhos) {
+            try { Graph DELETE "v1.0/applications/$($v.id)" -Tentativas 2 | Out-Null; Ok "apagado: $($v.displayName)" }
+            catch { Aviso "não consegui apagar $($v.displayName): $($_.Exception.Message)" }
+        }
+    }
+}
 function Conectar-Exchange([string]$t, [string]$papel) {
     Info "login de ADMIN do Exchange Online do $papel ($t). Use 'Usar outra conta' se precisar."
-    Connect-ExchangeOnline -ShowBanner:$false
+    Tentar-Login "Exchange Online" { Connect-ExchangeOnline -ShowBanner:$false -ErrorAction Stop }
     $inicial = (Get-AcceptedDomain | Where-Object InitialDomain).DomainName
     Campo "Organização" (Get-OrganizationConfig).DisplayName
     Campo "Tenant"      $inicial
@@ -317,7 +343,7 @@ function Criar-AppLeitura([string]$t, [string]$papel, $camadas) {
     $perms = @($perms | Select-Object -Unique)
 
     Info "login de ADMIN do Microsoft Graph do $papel ($t). Use 'Usar outra conta' se precisar."
-    Connect-MgGraph -TenantId $t -NoWelcome -Scopes "Application.ReadWrite.All", "AppRoleAssignment.ReadWrite.All", "Organization.Read.All"
+    Tentar-Login "Microsoft Graph" { Connect-MgGraph -TenantId $t -NoWelcome -Scopes "Application.ReadWrite.All", "AppRoleAssignment.ReadWrite.All", "Organization.Read.All" -ErrorAction Stop }
     $org = (Graph GET "v1.0/organization?`$select=displayName,verifiedDomains").value[0]
     $inicial = ($org.verifiedDomains | Where-Object { $_.isInitial }).name
     Campo "Organização" $org.displayName
@@ -327,6 +353,7 @@ function Criar-AppLeitura([string]$t, [string]$papel, $camadas) {
         Disconnect-MgGraph | Out-Null
         Encerrar "Login no tenant errado: esperado $t, conectado em $inicial."
     }
+    Limpar-AppsEsquecidos
     $graphSp = Graph GET "v1.0/servicePrincipals(appId='00000003-0000-0000-c000-000000000000')"
     $roles   = $graphSp.appRoles | Where-Object { $_.value -in $perms -and $_.allowedMemberTypes -contains "Application" }
     $app = Graph POST "v1.0/applications" @{
@@ -1243,8 +1270,8 @@ try {
         Write-Host ""
         Write-Host "     [1]  Kit completo   " -ForegroundColor Cyan -NoNewline; Write-Host "e-mails, pasta, anexo, reunião, contato e OneDrive" -ForegroundColor Gray
         Write-Host "     [2]  Só OneDrive    " -ForegroundColor Cyan -NoNewline; Write-Host "quando os e-mails já foram criados antes" -ForegroundColor Gray
-        Write-Host "     [4]  Validar        " -ForegroundColor Cyan -NoNewline; Write-Host "confere a migração em 6 camadas e gera relatório HTML" -ForegroundColor Gray
         if (-not $Simular) { Write-Host "     [3]  Simular        " -ForegroundColor Magenta -NoNewline; Write-Host "mostra tudo o que seria feito, sem login e sem mudar nada" -ForegroundColor Gray }
+        Write-Host "     [4]  Validar        " -ForegroundColor Cyan -NoNewline; Write-Host "confere a migração em 6 camadas e gera relatório HTML" -ForegroundColor Gray
         Write-Host "     [0]  Sair" -ForegroundColor Cyan
         switch (Pergunta "Opção:") {
             "1"     { $Modo = "Completo" }
@@ -1284,8 +1311,8 @@ try {
         $nomeOrg = "Contoso (simulação)"; $dominioInicial = $Tenant; $conta = "admin@$Tenant"
     } else {
         Info "abrindo o login. Use a conta de ADMIN do tenant de origem (clique em 'Usar outra conta' se precisar)."
-        Connect-MgGraph -TenantId $Tenant -NoWelcome -Scopes `
-            "Application.ReadWrite.All", "AppRoleAssignment.ReadWrite.All", "User.Read.All", "Organization.Read.All"
+        Tentar-Login "Microsoft Graph" { Connect-MgGraph -TenantId $Tenant -NoWelcome -ErrorAction Stop -Scopes `
+            "Application.ReadWrite.All", "AppRoleAssignment.ReadWrite.All", "User.Read.All", "Organization.Read.All" }
         $org = (Graph GET "v1.0/organization?`$select=displayName,verifiedDomains").value[0]
         $nomeOrg = $org.displayName
         $dominioInicial = ($org.verifiedDomains | Where-Object { $_.isInitial }).name
@@ -1335,6 +1362,7 @@ try {
         Sim "criaria o app 'Kit-Validacao-ODM (temporario)' com segredo válido por 2 horas"
         Sim ("daria a ele: " + ($perms -join ", "))
     } else {
+    Limpar-AppsEsquecidos
     $graphSp = Graph GET "v1.0/servicePrincipals(appId='00000003-0000-0000-c000-000000000000')"
     $roles   = $graphSp.appRoles | Where-Object { $_.value -in $perms -and $_.allowedMemberTypes -contains "Application" }
     $app = Graph POST "v1.0/applications" @{
@@ -1536,7 +1564,7 @@ catch {
     }
     foreach ($a in @($script:appsVal | Where-Object { $_ })) {
         Aviso "o app de leitura '$($a.Nome)' pode ter ficado no tenant $($a.Tenant)."
-        Aviso "Apague em Entra ID > App registrations > All applications."
+        Info "a próxima execução encontra e oferece apagar; ou apague em Entra ID > App registrations > All applications."
     }
 }
 finally {
