@@ -183,4 +183,86 @@ Quando um dado está faltando ou desatualizado, é o segundo que resolve.
 
 ---
 
-*A migração de e-mail e OneDrive vai entrando aqui.*
+## 6. Antes de migrar: a foto do destino
+
+Antes da primeira migração rodei o modo de validação do [kit](../scripts/kit-validacao-odm.ps1) (opção 4). Ele só lê os dois tenants e compara seis camadas: conta, caixa, pastas, itens do kit, uma amostra de e-mails reais e o OneDrive.
+
+![Validação antes da migração](img/57-validacao-antes.png)
+
+- **24 conferências OK**: os 6 pré-requisitos de cada conta (conta no destino, Exchange e SharePoint na licença, usage location, caixa e OneDrive já criados) e duas propriedades da caixa.
+- **60 pendentes**: tudo o que ainda tem que chegar. São 20 por conta: o X500, 4 pastas, 7 itens do kit, 6 e-mails da amostra e 2 arquivos do OneDrive.
+
+O destino não estava vazio. A Caixa de Entrada tinha 2 ou 3 e-mails que a própria Microsoft manda quando a licença é atribuída. Por isso a contagem total de itens não prova nada. O que prova a migração é a identidade do item: o Message-ID do e-mail, o hash do anexo e do arquivo.
+
+Esse relatório fica como evidência do "antes". Depois da migração roda de novo, e a meta é os 60 pendentes virarem OK.
+
+## 7. Migrate Mail: o assistente tela por tela
+
+O assistente tem 12 telas: Start, Licensing Plan, Migration Options, Migration Settings, Sensitivity labels, Mail Flow, Mail Folders, Date Range, Notification, Reporting, Schedule e Summary.
+
+### Como a migração de e-mail costuma rodar num projeto
+
+Quase nenhum projeto migra a caixa inteira numa noite só. O desenho mais comum é este:
+
+| Etapa | Quando | O que acontece |
+|---|---|---|
+| **Pré-carga** | Semanas antes do corte | Primeira passada com tudo, ou com o histórico antigo. É a mais demorada |
+| **Deltas** | Durante as semanas seguintes | Novas passadas copiam só o que mudou desde a anterior |
+| **Corte** | Normalmente num fim de semana | Último delta, troca da caixa (Switch) e mudança do MX |
+| **Pós-corte** | Dias depois | Um delta final para pegar o que chegou atrasado na origem |
+
+Esse desenho deixa o corte rápido, porque no fim de semana só falta copiar alguns dias de e-mail. As opções do assistente são as mesmas em todas as etapas; o que muda é a data e o que se marca em Mail Flow e Schedule.
+
+### Licensing Plan (tela 2)
+
+![Licensing Plan](img/58-migrate-mail-licensing.png)
+
+A caixa do destino só existe se a conta tiver licença com Exchange Online. Esta tela deixa o ODM atribuir a licença durante a migração.
+
+| Opção | O que faz | Quando usar |
+|---|---|---|
+| **Assign a license plan** desmarcado | Não mexe em licença | Quando as licenças já foram atribuídas antes |
+| **Unlicensed accounts** | Atribui só para quem não tem licença | Quando o cliente quer que a ferramenta licencie na hora |
+| **All accounts** | Troca a licença de todos pela escolhida | Só quando o projeto manda padronizar licenças |
+
+**Exemplos:**
+- Indústria com 2.000 usuários que já licencia por grupo no Entra ID (o usuário entra no grupo e recebe a licença): desmarcado. A licença já está lá quando a migração começa.
+- Grupo de clínicas que comprou outra rede e não quer pagar licença antes da hora: marcado, com *unlicensed accounts*. Vale deixar uma folga entre licenciar e migrar, porque a caixa leva alguns minutos para ser criada.
+- Fusão em que a diretoria decidiu que todo mundo vai para o mesmo plano: *all accounts*, com aprovação por escrito, porque pode trocar um E5 por um E3.
+
+**Padrão que uso:** desmarcado, com as licenças atribuídas antes por grupo. A validação do kit confirma os pré-requisitos antes da primeira passada.
+
+### Migration Options (tela 3)
+
+![Migration Options](img/59-migrate-mail-options.png)
+
+**Migration Scenario**, de onde para onde:
+
+| De → Para | Quando usar | Exemplo |
+|---|---|---|
+| **Primary → Primary** | Sempre, na tarefa principal | Todo projeto |
+| **Archive → Archive** | Quando a origem tem arquivo morto, numa tarefa separada depois da principal | Escritório de contabilidade com dez anos de e-mail no arquivo morto |
+| **Archive → Primary** | Quando o destino não vai usar arquivo morto | Empresa que decidiu acabar com o arquivo morto na nova estrutura |
+| **Primary → Archive** | Mandar parte da caixa principal direto para o arquivo, junto com o filtro de datas | Diretor com caixa perto do limite: o que tem mais de dois anos vai para o arquivo |
+
+**O que migrar:**
+
+| Opção | O que faz | Quando marcar |
+|---|---|---|
+| **Mail, Calendar, Contacts, Tasks/Notes** | Os tipos de conteúdo | Sempre os quatro |
+| **Migrate Recoverable Items** | A pasta oculta de itens recuperáveis: o que foi apagado da Lixeira e o que está retido | Só com pedido do jurídico ou do compliance do cliente |
+| **Migrate Safe Sender and Blocked List** | Remetentes confiáveis e bloqueados do usuário | Sempre. Quando some, e-mail bom volta a cair no lixo eletrônico e vira chamado |
+| **Reset Migration** | Ignora o que já foi copiado e faz a migração completa de novo, em vez do delta | Só para corrigir problema |
+| **Refresh Source and Target Accounts** | Relê as contas nos dois tenants antes de migrar, pegando mudança de UPN e de e-mail principal | Sempre. Custa pouco e evita erro de conta desatualizada |
+
+**Exemplos:**
+- Escritório de advocacia com caixas em retenção por causa de processos: *Recoverable Items* marcado, com a decisão registrada pelo jurídico do cliente. Outra saída comum é manter o tenant de origem com a retenção ativa por alguns anos, em vez de migrar esses itens.
+- Banco, corretora ou hospital com regra de guarda de e-mail: a mesma conversa com o compliance antes de decidir.
+- Usuária que mudou de sobrenome no meio do projeto e ganhou UPN novo: o *Refresh* pega a mudança sem precisar rodar o Discovery de novo.
+- Alguém apagou uma pasta migrada no destino e precisa de tudo de volta: *Reset Migration* naquela caixa, numa tarefa só para ela.
+
+**Padrão que uso:** Primary → Primary; os quatro tipos de conteúdo; Safe Sender e Refresh marcados; Recoverable Items só com pedido formal; Reset desmarcado. Se a origem tiver arquivo morto, crio uma segunda tarefa Archive → Archive depois da principal.
+
+---
+
+*As próximas telas do assistente vão entrando aqui.*
