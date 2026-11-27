@@ -251,7 +251,7 @@ A caixa do destino só existe se a conta tiver licença com Exchange Online. Est
 |---|---|---|
 | **Mail, Calendar, Contacts, Tasks/Notes** | Os tipos de conteúdo | Sempre os quatro |
 | **Migrate Recoverable Items** | A pasta oculta de itens recuperáveis: o que foi apagado da Lixeira e o que está retido | Só com pedido do jurídico ou do compliance do cliente |
-| **Migrate Safe Sender and Blocked List** | Remetentes confiáveis e bloqueados do usuário | Sempre. Quando some, e-mail bom volta a cair no lixo eletrônico e vira chamado |
+| **Migrate Safe Sender and Blocked List** | Remetentes confiáveis e bloqueados do usuário | Na passada final. Ao marcar, a própria tela avisa que a migração fica bem mais lenta. Mas não pode faltar: quando some, e-mail bom volta a cair no lixo eletrônico e vira chamado |
 | **Reset Migration** | Ignora o que já foi copiado e faz a migração completa de novo, em vez do delta | Só para corrigir problema |
 | **Refresh Source and Target Accounts** | Relê as contas nos dois tenants antes de migrar, pegando mudança de UPN e de e-mail principal | Sempre. Custa pouco e evita erro de conta desatualizada |
 
@@ -261,7 +261,17 @@ A caixa do destino só existe se a conta tiver licença com Exchange Online. Est
 - Usuária que mudou de sobrenome no meio do projeto e ganhou UPN novo: o *Refresh* pega a mudança sem precisar rodar o Discovery de novo.
 - Alguém apagou uma pasta migrada no destino e precisa de tudo de volta: *Reset Migration* naquela caixa, numa tarefa só para ela.
 
-**Padrão que uso:** Primary → Primary; os quatro tipos de conteúdo; Safe Sender e Refresh marcados; Recoverable Items só com pedido formal; Reset desmarcado. Se a origem tiver arquivo morto, crio uma segunda tarefa Archive → Archive depois da principal.
+**Padrão que uso:**
+
+| Opção | Pré-carga e deltas | Passada final (corte) |
+|---|---|---|
+| Primary → Primary e os quatro tipos de conteúdo | ✅ | ✅ |
+| Refresh Source and Target Accounts | ✅ | ✅ |
+| Safe Sender and Blocked List | ❌ (deixa a passada bem mais lenta) | ✅ |
+| Recoverable Items | só com pedido formal | só com pedido formal |
+| Reset Migration | ❌ | ❌ |
+
+Se a origem tiver arquivo morto, crio uma segunda tarefa Archive → Archive depois da principal. A lista de remetentes é configuração da caixa, como a resposta automática: vale o estado do dia do corte, então ela vai junto na passada final.
 
 ### Migration Settings (tela 4)
 
