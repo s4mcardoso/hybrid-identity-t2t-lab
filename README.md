@@ -20,7 +20,7 @@ Projeto de estudo pessoal. Montei do zero um ambiente com duas florestas Active 
 |---|---|
 | **O que montei** | 6 servidores Windows Server 2022, 2 florestas Active Directory e 2 tenants Microsoft 365, simulando a separação de uma empresa de um grupo. |
 | **O problema** | Sincronizar a mesma floresta para dois tenants ao mesmo tempo, com o mesmo identificador para cada usuário nos dois lados. Sem isso, a migração gera contas duplicadas. |
-| **Resultado** | Os 10 usuários da Nexus com o mesmo `immutableId` nos dois tenants, conferido por script, regras de sincronização próprias, nove problemas resolvidos e documentados, os agentes do Quest Directory Sync conectados nas duas florestas e um usuário migrado da Acme para a Nexus com SID History, acessando a pasta antiga sem nenhuma mudança de permissão. |
+| **Resultado** | Os 10 usuários da Nexus com o mesmo `immutableId` nos dois tenants, conferido por script, regras de sincronização próprias, onze problemas resolvidos e documentados, os agentes do Quest Directory Sync conectados nas duas florestas e um usuário migrado da Acme para a Nexus com SID History, acessando a pasta antiga sem nenhuma mudança de permissão. |
 
 ---
 
@@ -69,6 +69,8 @@ O que eu queria aprender:
 | Regras de sincronização | Regras outbound no Synchronization Rules Editor com expressões e `AuthoritativeNull` | [Fase 5](#fase-5-regras-de-transformação-customizadas) |
 | PowerShell | Scripts de conferência no AD, no ADSync e no Microsoft Graph | [Validação](#validação) |
 | Quest On Demand | Ambientes locais e agentes do Directory Sync nas duas florestas, conta de serviço, passphrase de sincronização de senha e conta para SID History | [Fase 8](#fase-8-agentes-do-quest-directory-sync) |
+| Quest ODM M365 | Projeto entre os dois tenants, Discovery por CSV, Match por `immutableId` e Map from File | [Fase 12](#fase-12-piloto-do-odm-m365-preparação-discovery-e-match) |
+| Automação no Microsoft 365 | Script de kit de validação com app temporário no Graph, permissões de aplicação, modo simulação (`-WhatIf`) e pré-provisionamento de OneDrive | [Fase 12](#fase-12-piloto-do-odm-m365-preparação-discovery-e-match) |
 | Virtualização | 6 VMs no VMware Workstation, reparo de disco virtual, dimensionamento de RAM e CPU e snapshots automatizados com `vmrun` | [Fase 7](#fase-7-preparação-das-vms-do-quest-odm) |
 
 ---
@@ -87,6 +89,7 @@ Os detalhes de cada um estão em [Resolução de problemas](#resolução-de-prob
 | O DC da Acme voltou 3 dias atrasado depois de ficar suspenso, e o `w32tm` se recusou a corrigir | Acertei a data manualmente, reconfigurei a fonte NTP e testei a comunicação com `w32tm /stripchart` | DC sincronizado com o `ntp.br`, sem risco para o Kerberos |
 | As duas VMs do Quest ODM não ligavam: "The specified virtual disk needs repair" | Fiz backup das pastas e reparei os discos com o `vmware-vdiskmanager` em vez de recriar as VMs | VMs ligando, disco e domínio conferidos, hardware ajustado para o agente |
 | O export do Entra Connect para o AD falhava em todo ciclo desde 17/11, sem ninguém notar | Li o histórico de Operations, achei a conta de serviço do ODM no Domain Admins e provei o AdminSDHolder com `adminCount` e herança | Conta de serviço tirada da sincronização e export voltando a `success` nos dois servidores |
+| O Discovery do ODM falhou pedindo uma função de diretório que o app da Quest já tinha | Conferi a função nos dois tenants antes de mexer em qualquer coisa e não alterei nada | Era propagação: a tarefa passou sozinha, e um refresh completou os dados das contas |
 
 ---
 
@@ -910,6 +913,88 @@ No `SRV-ADC-Nexus` a conferência foi a mesma, com um controle diferente: o `Tes
 
 ---
 
+### Fase 12: Piloto do ODM M365: preparação, Discovery e Match
+
+**Objetivo:** levar três usuários da Nexus (Teste Nexus 1, 2 e 3) do Tenant Origem para o Tenant B com o Quest ODM, usando as contas que o Entra Connect já criou no destino.
+
+As opções de cada tela, com o que fazem e quando usar, estão no [guia de consulta do ODM M365](docs/guia-odm-m365.md).
+
+#### 1. Licenças nos dois tenants
+
+As contas sincronizadas chegam sem licença, e sem licença não existe caixa nem OneDrive. Atribuí *Microsoft 365 E5 (no Teams)* e *Microsoft Teams Enterprise* aos três usuários nos dois tenants. O destino também precisa de licença, porque o ODM grava dentro de uma caixa que já existe.
+
+| Tenant | Licenças livres antes | O que fiz |
+|---|---|---|
+| Tenant Origem | 0 de 20 | Tirei as licenças de três usuários de demonstração e passei para os três de teste |
+| Tenant B | 16 de 20 | Atribuí direto |
+
+A licença só é aceita com o *Usage location* preenchido. Conta sincronizada costuma vir sem ele, porque o atributo `c` do AD está vazio. No lab preenchi à mão; num projeto grande isso se resolve pelo AD ou por script.
+
+Tirar a licença não apaga a caixa na hora: o Exchange guarda a caixa desconectada por 30 dias.
+
+#### 2. Kit de validação na origem
+
+Para conferir a migração, cada usuário precisa ter um conteúdo conhecido. Escrevi o script [`scripts/kit-validacao-odm.ps1`](scripts/kit-validacao-odm.ps1), que cria em cada conta:
+
+| Item | Quantidade |
+|---|---|
+| E-mails na Caixa de Entrada, um com anexo | 4 |
+| Pasta *Projeto Nexus* com um e-mail | 1 |
+| Reunião na semana seguinte | 1 |
+| Contato pessoal | 1 |
+| Arquivos no OneDrive (raiz e pasta) | 2 |
+
+Como ele funciona:
+
+1. Login de admin e confirmação do tenant, mostrando o nome da organização antes de qualquer mudança.
+2. Escolha das contas numa tabela (`Out-GridView`), ou por parâmetro ou CSV.
+3. Criação de um app temporário no Entra ID com permissões de aplicação no Microsoft Graph (`Mail.ReadWrite`, `Calendars.ReadWrite`, `Contacts.ReadWrite`, `Files.ReadWrite.All`) e segredo de 2 horas.
+4. Pedido dos OneDrives na origem e no destino com o `Request-SPOPersonalSite`.
+5. Criação do conteúdo, entrando como o app. Antes de gravar no OneDrive, ele espera o OneDrive ficar pronto.
+6. Resumo, manifesto em CSV e exclusão do app. O app é dono do próprio registro e se apaga sozinho.
+
+Ele também tem modo simulação (`-WhatIf` ou a opção 3 do menu), que mostra todas as telas sem login e sem mudar nada, e grava um log de cada sessão.
+
+O app temporário existe porque, com permissão delegada, nem um admin consegue criar itens na caixa de outra pessoa. É a mesma ideia do consentimento que o ODM pede: dar a um app permissão de aplicação sobre as caixas do tenant.
+
+Na primeira execução, os e-mails foram criados, mas o OneDrive não: ele só existe depois do primeiro acesso do usuário. O pré-provisionamento com `Request-SPOPersonalSite` resolveu, e foi incorporado ao script.
+
+#### 3. Discovery
+
+Usei *Discover from File* com um CSV só com os três usuários, que é como se trabalha por ondas num projeto:
+
+```
+UserPrincipalName,Type
+teste.nexus1@<tenant-origem>.onmicrosoft.com,user
+teste.nexus2@<tenant-origem>.onmicrosoft.com,user
+teste.nexus3@<tenant-origem>.onmicrosoft.com,user
+```
+
+A primeira tentativa falhou com o erro do [problema 10](#problema-10-o-discovery-pedia-uma-função-que-o-app-já-tinha). As contas apareceram na lista, mas incompletas, e isso causou o [problema 11](#problema-11-o-match-bloqueado-por-uma-descoberta-incompleta).
+
+#### 4. Match e Map
+
+Para praticar as duas formas de casar:
+
+| Conta | Método |
+|---|---|
+| Teste Nexus 1 e 2 | *Match Selected* com `immutableId` na origem e no destino |
+| Teste Nexus 3 | *Map from File*, com o par `SourceUPN,TargetUPN` e a opção *Match with existing account* |
+
+O `immutableId` é igual nos dois tenants porque os dois Entra Connect usam o `ms-DS-ConsistencyGuid` como Source Anchor. É a ligação entre as duas metades do lab: a estratégia de identidade das Fases 2 e 4 é o que torna o casamento no ODM determinístico. Pelo `displayName` também casaria, mas nome de exibição se repete e muda.
+
+![Contas casadas no ODM](docs/img/56-odm-contas-casadas.png)
+
+As três contas terminaram casadas com o par certo. O Teste Nexus 3, mapeado por arquivo, ficou sem *Target Type*: o Map grava o par sem ler a conta do destino. Um *Refresh Selected Accounts* completa esses dados antes da migração.
+
+#### Próximos passos desta fase
+
+- Refresh do Teste Nexus 3 e conferência do *Target Type*.
+- Migração de e-mail e OneDrive dos três usuários.
+- Conferência do conteúdo no destino contra o manifesto do kit de validação.
+
+---
+
 ## Validação
 
 ### `ms-DS-ConsistencyGuid` gravado no AD
@@ -1248,6 +1333,36 @@ Depois desmarquei a `Contas-Servico` no filtro dos dois `SRV-ADC` (ver [Fase 11]
 
 ---
 
+### Problema 10: o Discovery pedia uma função que o app já tinha
+
+| | |
+|---|---|
+| **Sintoma** | O *Discover from File* falhou com: *"The role assigned to application c03b5dbd-... isn't supported in this scenario. Please check online documentation for assigning correct Directory Roles to Azure AD Application for EXO App-Only Authentication."* |
+| **Contexto** | Para ler contas e caixas, o ODM conecta no PowerShell do Exchange Online como aplicação, sem usuário. Nesse modo, o app precisa de uma função de diretório, além das permissões de API do consentimento. A solução documentada pela Quest é dar a função *Exchange Administrator* ao app *Quest On Demand - Migration - Basic*. |
+| **O que encontrei** | Antes de mudar qualquer coisa, conferi a função nos dois tenants. No Tenant Origem, o app do erro (*Basic - Minimal*) e o *Basic - Full* já eram *Exchange Administrator*. No Tenant B só os apps *Full* foram consentidos, e o *Basic - Full* também já tinha a função. |
+| **Causa** | Atraso de propagação. Função atribuída a app leva tempo para valer no Exchange Online. |
+| **Solução** | Nenhuma mudança. A tarefa foi tentada de novo pelo próprio ODM e passou. |
+
+**Prevenção:** quando a correção documentada já está aplicada, o próximo suspeito é o tempo. Conferir o estado atual antes de corrigir evita refazer algo que já estava certo e achar que a "correção" resolveu.
+
+---
+
+### Problema 11: o Match bloqueado por uma descoberta incompleta
+
+| | |
+|---|---|
+| **Sintoma** | O *Match Selected* não rodou: *"Unable to run this task as some of the accounts doesn't have all the information required for evaluating the license. Please run the discovery task."* |
+| **Causa** | O Discovery do problema 10 terminou como *Failed*. As contas entraram na lista, mas sem os detalhes, e a coluna *Source Type* estava vazia. Sem esses dados, o ODM não calcula a licença da Quest que a migração vai consumir. |
+| **Solução** | *Discovery > Refresh Selected Accounts* nas três contas. O *Source Type* passou a mostrar *Mailbox-Enabled*, e o Match rodou. |
+
+A aba *Tasks* mostrou a sequência: Discovery com falha, Match com falha, Refresh completo, Match completo. A causa do segundo erro estava na tarefa anterior.
+
+![Tarefas do piloto](docs/img/55-odm-tasks.png)
+
+**Prevenção:** depois de um Discovery, conferir a coluna *Source Type* e o estado da tarefa, não só se as contas apareceram na lista.
+
+---
+
 ## Lições aprendidas
 
 1. **A ordem de instalação faz parte da arquitetura.** O primeiro Entra Connect grava o atributo no AD e o segundo só lê. Se a ordem muda, ou se o segundo servidor escolhe o anchor sozinho, o match se perde.
@@ -1280,6 +1395,14 @@ Depois desmarquei a `Contas-Servico` no filtro dos dois `SRV-ADC` (ver [Fase 11]
 28. **Permission-issue em conta de admin costuma ser AdminSDHolder.** `adminCount = 1` e herança desligada confirmam em um comando.
 29. **"Não encontrado" só vale como prova com um controle.** Toda consulta de ausência no connector space teve um objeto que precisava ser encontrado na mesma consulta.
 30. **Objeto no connector space não quer dizer objeto sincronizado.** Um *placeholder* existe só para guardar a referência de um grupo. O `ConnectedMVObjectId` zerado é o que mostra que ele não vai para a nuvem.
+31. **Conta sincronizada não ganha licença sozinha, e a licença pede país.** Sem *Usage location* a atribuição não salva.
+32. **Caixa nasce com a licença; OneDrive nasce no primeiro acesso.** Para migrar OneDrive, origem e destino precisam ser provisionados antes, com o `Request-SPOPersonalSite`.
+33. **Permissão de API e função de diretório são coisas diferentes.** O consentimento dá a primeira. O PowerShell do Exchange como aplicação também exige a segunda.
+34. **Antes de corrigir, conferir o estado atual.** A função que o erro pedia já estava atribuída, e o problema era só tempo.
+35. **Validar migração é comparar o que tinha com o que chegou.** Conteúdo pequeno e conhecido, criado por script, vale mais que caixas cheias de dados de demonstração.
+36. **O `immutableId` igual nos dois tenants é o que torna o Match seguro.** A estratégia de identidade do Entra Connect foi a base do casamento no ODM.
+37. **Map from File grava o par sem conferir o destino.** Depois dele, um refresh e a conferência do *Target Type*.
+38. **A aba Tasks é o diário do projeto.** A causa de uma falha costuma estar numa tarefa anterior.
 
 ---
 
@@ -1352,7 +1475,8 @@ Os prints de antes e depois estão no [problema 5](#problema-5-as-regras-com-nul
 | Conferência do `immutableId` entre os tenants | Concluída (10 de 10) |
 | Preparação das VMs do ODM (reparo de disco, hardware, conectividade) | Concluída |
 | Directory Sync: agentes nas duas florestas | Concluída |
-| ODM M365: tenants, contas, e-mail, OneDrive e Teams | Planejada |
+| ODM M365: preparação dos tenants, Discovery e Match | Concluída |
+| ODM M365: migração de e-mail e OneDrive | Em andamento |
 | SID History: pré-requisitos | Concluída |
 | Migração AD para AD com SID History | Concluída |
 | Escopo do Entra Connect depois da migração | Concluída |
@@ -1368,9 +1492,9 @@ O objetivo das próximas fases é praticar os três produtos do Quest On Demand 
 
 Próximas ações:
 
-- [ ] Conectar o Tenant Origem e o Tenant B no Quest On Demand.
-- [ ] Rodar o Discovery de contas e grupos.
-- [ ] Definir como o ODM vai casar as contas. No Tenant B as contas já existem, criadas pelo Entra Connect, então o ODM deve casar e não criar. O UPN do mesmo usuário é diferente em cada tenant (só a parte antes do `@` é igual), então o match não pode ser pelo UPN completo.
+- [x] Conectar o Tenant Origem e o Tenant B no Quest On Demand.
+- [x] Rodar o Discovery dos usuários do piloto.
+- [x] Casar as contas com as que o Entra Connect já criou no Tenant B, por `immutableId` e por arquivo.
 - [ ] Migrar e-mail, OneDrive e Teams de alguns usuários de teste e registrar os resultados aqui.
 - [x] Migrar o `teste.acme1` da Acme para a Nexus com SID History e testar o acesso à pasta `Financeiro`.
 - [ ] Instalar o filtro de senha nos DCs e testar a sincronização de senha.
