@@ -815,7 +815,10 @@ function Comparar($p) {
                 Reg $n $cam "Encaminhamento da origem" $enc "-" "OK" "a origem encaminha para o destino: a troca de caixa (Switch) foi feita"
             } elseif ($enc) { Reg $n $cam "Encaminhamento da origem" $enc "-" "Info" "a origem encaminha para outro endereço" }
             else { Reg $n $cam "Encaminhamento da origem" "nenhum" "-" "Info" "a troca de caixa (Switch) ainda não foi feita" }
-            if ($db.Encaminha) { Reg $n $cam "Encaminhamento do destino" "-" $db.Encaminha "Atenção" "o destino encaminha e-mail: confira se não é o caminho inverso" }
+            $encD = $db.Encaminha
+            if ($encD -and ($encD -eq $ob.Smtp -or $encD -like "*@$Tenant" -or (Prefixo $encD) -eq (Prefixo $p.Origem))) {
+                Reg $n $cam "Encaminhamento do destino" "-" $encD "Info" "o destino encaminha para a origem: esperado antes do corte (Mail Flow do ODM)"
+            } elseif ($encD) { Reg $n $cam "Encaminhamento do destino" "-" $encD "Atenção" "o destino encaminha para um endereço que não é a origem: confira" }
             if ($ob.LegacyDN) {
                 if ($db.X500 -contains $ob.LegacyDN) { Reg $n $cam "X500 da origem no destino" "LegacyExchangeDN" "presente" "OK" "respostas a e-mails e reuniões antigas chegam no destino" $ob.LegacyDN -Dados }
                 else { Reg $n $cam "X500 da origem no destino" "LegacyExchangeDN" "ausente" "Atenção" "sem esse X500, responder e-mails e reuniões antigas pode voltar com NDR (IMCEAEX)" $ob.LegacyDN -Dados }
