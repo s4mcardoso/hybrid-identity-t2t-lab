@@ -371,6 +371,30 @@ Durante o projeto o usuário tem duas caixas: a da origem, que ele usa, e a do d
 | Fim do projeto | Remove, para limpar o encaminhamento quando a origem for desligada |
 | Domínio compartilhado ou movido no corte | Domínio personalizado com o .onmicrosoft.com |
 
+### Mail Folders (tela 7)
+
+![Mail Folders](img/63-migrate-mail-folders.png)
+
+Decide quais pastas migram e onde elas caem no destino.
+
+| Opção | O que faz | Quando usar |
+|---|---|---|
+| **Migrate all folders** | Leva a caixa inteira, pasta por pasta | O padrão de quase todo projeto |
+| **Migrate all folders except** | Leva tudo menos as pastas escolhidas | Cliente que não quer levar Lixo Eletrônico ou Itens Excluídos |
+| **Migrate specific folders** | Leva só as pastas escolhidas | Pedido pontual, como levar só uma pasta de contratos |
+| **Migrate to custom folder** | Coloca todo o conteúdo dentro de uma pasta, por exemplo "Migrated Mailbox" | Quando a caixa do destino já é usada e o histórico não pode se misturar com o que já está lá |
+| **Migrate to folder** | Manda uma pasta conhecida (Inbox, Sent Items...) para uma pasta com outro nome | Separar o histórico só de algumas pastas |
+
+Com a pasta personalizada, as permissões de pastas que não são de e-mail (como o calendário) não migram. Vale avisar o cliente antes.
+
+**Exemplos:**
+- Empresa de engenharia que vai juntar duas operações: todo mundo começa do zero no destino, então *all folders*.
+- Indústria que quer reduzir o volume da migração: *all folders except* Lixo Eletrônico, e às vezes Itens Excluídos, com o cliente de acordo por escrito.
+- Funcionário que já trabalhava nos dois tenants e tem caixa ativa no destino: *custom folder* "Caixa antiga", para o histórico ficar separado do que ele já tem.
+- Pedido do jurídico para levar só a pasta "Contratos" de um diretor que saiu: *specific folders*.
+
+**Padrão que uso:** *Migrate all folders*, sem pasta personalizada. E a mesma escolha em todas as passadas do projeto: mudar a configuração de pastas entre a pré-carga e os deltas deixa o destino inconsistente.
+
 ---
 
 *As próximas telas do assistente vão entrando aqui.*
