@@ -418,6 +418,31 @@ Um bug conhecido, das notas de versão da Quest: se você preenche uma das datas
 
 **Padrão que uso:** caixa desmarcada, todo o histórico. Filtro de data só com pedido do cliente ou com prazo que não comporta a migração inteira antes do corte.
 
+### Notification (tela 9)
+
+Manda um e-mail quando a tarefa termina, ou só quando ela falha.
+
+**Padrão que uso:** em projeto, aviso só em caso de falha, para uma caixa do time de migração e não para o e-mail pessoal de alguém. Numa onda com centenas de caixas, aviso de sucesso vira ruído. No lab, tanto faz.
+
+### Reporting (tela 10)
+
+![Reporting](img/65-migrate-mail-reporting.png)
+
+| Opção | O que faz | Padrão |
+|---|---|---|
+| **Generate detailed report of migration errors** | Gera o relatório detalhado de erros da tarefa, guardado por 30 dias | Sempre marcado |
+| **Generate AI summary** | Um resumo gerado por IA para cada objeto e um geral da tarefa | Só com aprovação |
+
+**Relatório de erros.** É ele que diz qual item falhou e por quê. Como some depois de 30 dias, eu baixo e guardo na pasta do projeto ao fim de cada onda. Vira evidência para o cliente e base para tratar os itens com problema.
+
+**Resumo por IA.** Na primeira vez a Quest pede para aceitar os termos de uso de IA, e o aceite vale para a organização inteira no Quest On Demand. Isso não é decisão de quem está operando a migração: é da empresa dona da organização e, em muitos casos, do cliente, porque os dados da migração passam pela IA.
+
+**Exemplos:**
+- Hospital ou banco com regra rígida sobre dados: resumo por IA desmarcado, a não ser que o cliente aprove por escrito.
+- Projeto interno ou cliente que aprovou o uso: marcado, ajuda a ler rápido uma onda grande com muitos avisos.
+
+**Padrão que uso:** relatório de erros marcado sempre; resumo por IA desmarcado até ter aprovação da empresa e do cliente.
+
 ---
 
 *As próximas telas do assistente vão entrando aqui.*
