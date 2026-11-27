@@ -338,6 +338,39 @@ A caixa só funciona depois de um fluxo próprio, que precisa ser feito antes da
 
 **Padrão que uso:** no levantamento inicial, pergunto ao cliente e confiro no Purview se existem rótulos com criptografia em uso. Se não existem, fica desmarcado. Se existem, o fluxo de rótulos entra no plano antes da pré-carga.
 
+### Mail Flow (tela 6)
+
+![Mail Flow](img/62-migrate-mail-flow.png)
+
+Durante o projeto o usuário tem duas caixas: a da origem, que ele usa, e a do destino, que está sendo preenchida. Esta tela decide para onde vai um e-mail que cai na caixa "errada".
+
+| Opção | O que faz | Quando usar |
+|---|---|---|
+| **Manage Mail Forwarding** | Liga o controle de encaminhamento nesta tarefa | Marcado na pré-carga. A tela é opcional: o encaminhamento também pode ser feito depois, pela tarefa de Switch |
+| **Apply Mail Forwarding** | Coloca o encaminhamento | Junto com a direção escolhida |
+| **Remove Mail Forwarding** | Tira o encaminhamento que existir | Limpar encaminhamento antigo antes de migrar, ou tirar o do destino no fim do projeto. O Switch não consegue desligar encaminhamento, só esta opção |
+| **From target to source** | O destino encaminha para a origem | Antes do corte: o usuário ainda vive na origem |
+| **From source to target** | A origem encaminha para o destino | Depois do corte: o usuário já vive no destino |
+| **Custom domain for forwarding** | Escolhe o domínio do endereço de encaminhamento | Quando o endereço principal não roteia para o outro tenant. Em branco, usa o SMTP principal |
+
+**Por que o padrão é "do destino para a origem".** Depois da primeira passada, a caixa do destino existe, mas ninguém abre ela ainda. Se alguém do tenant de destino manda e-mail para o colega novo, a mensagem cai numa caixa que ninguém lê. O encaminhamento leva esse e-mail para a caixa que o usuário está usando. No corte, a direção inverte.
+
+**Por que existe o domínio personalizado.** Um domínio próprio (empresa.com.br) só pode estar verificado em um tenant por vez. Quando os dois lados usam o mesmo domínio, ou quando o domínio vai mudar de tenant no corte, o encaminhamento precisa de um endereço que sempre chega no lugar certo, como o domínio .onmicrosoft.com do outro tenant.
+
+**Exemplos:**
+- Rede de lojas comprada por um grupo: o time do grupo já vê os novos colegas no catálogo de endereços do destino e manda e-mail para eles lá. Com o encaminhamento do destino para a origem, nada se perde até o corte.
+- Aquisição em que o domínio da empresa comprada vai ser movido para o tenant do grupo no fim de semana do corte: domínio personalizado com o .onmicrosoft.com, porque o domínio próprio vai sair de um tenant e entrar no outro.
+- Usuário que tinha encaminhamento pessoal para o celular ou para outra conta na origem: avaliar com o cliente antes, porque a tarefa troca o endereço de encaminhamento.
+
+**Padrão que uso:**
+
+| Momento | Configuração |
+|---|---|
+| Pré-carga e deltas | Manage marcado, Apply, **From target to source** |
+| Corte | Tarefa de Switch Mailboxes, que inverte para **From source to target** |
+| Fim do projeto | Remove, para limpar o encaminhamento quando a origem for desligada |
+| Domínio compartilhado ou movido no corte | Domínio personalizado com o .onmicrosoft.com |
+
 ---
 
 *As próximas telas do assistente vão entrando aqui.*
