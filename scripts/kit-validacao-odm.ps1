@@ -28,6 +28,10 @@
     .\kit-validacao-odm.ps1 -Modo SoOneDrive -Usuarios teste.nexus1,teste.nexus2
 
 .EXAMPLE
+    .\kit-validacao-odm.ps1 -Modo Validar
+    Compara origem e destino: pastas do kit no Exchange Online e arquivos no OneDrive.
+
+.EXAMPLE
     .\kit-validacao-odm.ps1 -WhatIf
     Simulação: mostra todas as telas e o que seria feito, sem login e sem mudar nada.
 #>
@@ -37,7 +41,7 @@ param(
     [string]   $TenantDestino = "__DESTINO__",
     [string[]] $Usuarios,
     [string]   $CsvUsuarios,
-    [ValidateSet("Completo", "SoOneDrive")]
+    [ValidateSet("Completo", "SoOneDrive", "Validar")]
     [string]   $Modo,
     [ValidateRange(1, 50)]
     [int]      $QtdEmails = 3,
@@ -68,9 +72,9 @@ function Banner {
     }
 }
 function Sim([string]$t) { Write-Host "   [SIM ] $t" -ForegroundColor Magenta }
-function Etapa([int]$n, [string]$texto) {
+function Etapa([int]$n, [string]$texto, [int]$total = 6) {
     Write-Host ""
-    Write-Host ("  {0}/6  {1}" -f $n, $texto.ToUpper()) -ForegroundColor Cyan
+    Write-Host ("  {0}/{1}  {2}" -f $n, $total, $texto.ToUpper()) -ForegroundColor Cyan
     Linha
 }
 function Ok([string]$t)    { Write-Host "   [ OK ] $t" -ForegroundColor Green }
@@ -114,6 +118,169 @@ function Todos([string]$Uri) {
     return $itens
 }
 
+# =============================================================== validação
+function Conectar-Exchange([string]$t, [string]$papel) {
+    Info "login de ADMIN do Exchange Online do $papel ($t). Use 'Usar outra conta' se precisar."
+    Connect-ExchangeOnline -ShowBanner:$false
+    $inicial = (Get-AcceptedDomain | Where-Object InitialDomain).DomainName
+    Campo "Organização" (Get-OrganizationConfig).DisplayName
+    Campo "Tenant"      $inicial
+    if ($inicial -ne $t) {
+        Disconnect-ExchangeOnline -Confirm:$false | Out-Null
+        Encerrar "Login no tenant errado: esperado $t, conectado em $inicial."
+    }
+}
+
+function Pastas-Kit([string]$upn) {
+    $st = Get-EXOMailboxStatistics -Identity $upn -ErrorAction Stop
+    $fs = @(Get-MailboxFolderStatistics -Identity $upn -ErrorAction Stop)
+    $soma = { param($f) if ($f) { [int](($f | Measure-Object ItemsInFolder -Sum).Sum) } else { $null } }
+    [ordered]@{
+        "Total da caixa"   = [int]$st.ItemCount
+        "Caixa de Entrada" = & $soma ($fs | Where-Object FolderType -eq "Inbox")
+        "Projeto Nexus"    = & $soma ($fs | Where-Object Name -eq "Projeto Nexus")
+        "Calendário"       = & $soma ($fs | Where-Object FolderType -eq "Calendar")
+        "Contatos"         = & $soma ($fs | Where-Object FolderType -eq "Contacts")
+    }
+}
+
+function Invoke-Validacao {
+    $T = 5
+    # ---- 1. contas
+    Etapa 1 "Escolher as contas" $T
+    if (-not $TenantDestino) { $script:TenantDestino = Pergunta "Tenant de DESTINO (ex.: fabrikam.onmicrosoft.com):" }
+    if ($Usuarios) {
+        $prefixos = $Usuarios
+    } elseif ($Simular) {
+        $prefixos = "exemplo1", "exemplo2", "exemplo3"
+    } else {
+        $manifestos = @(Get-ChildItem $pastaBase -Filter "kit-validacao-*.csv" -ErrorAction SilentlyContinue)
+        $lista = @($manifestos | ForEach-Object { Import-Csv $_.FullName } | ForEach-Object { $_.Usuario } | Sort-Object -Unique |
+                   ForEach-Object { [pscustomobject]@{ Conta = $_.Split("@")[0]; Origem = $_ } })
+        if ($lista) {
+            Info "contas encontradas nos manifestos do kit. Selecione e clique em OK."
+            $prefixos = ($lista | Out-GridView -Title "Validação: escolha as contas e clique em OK" -OutputMode Multiple).Conta
+        } else {
+            $prefixos = (Pergunta "Contas, separadas por vírgula (ex.: teste.nexus1,teste.nexus2):") -split "\s*,\s*"
+        }
+    }
+    $prefixos = @($prefixos | Where-Object { $_ } | ForEach-Object { $_.Split("@")[0] })
+    if (-not $prefixos) { Encerrar "Nenhuma conta escolhida." }
+    foreach ($p in $prefixos) { Ok ("{0}@{1}  ->  {0}@{2}" -f $p, $Tenant, $TenantDestino) }
+    Info "o par é montado pelo nome antes do @, que é igual nos dois tenants neste lab"
+
+    $dados = @{}
+    foreach ($p in $prefixos) { $dados[$p] = @{ Origem = $null; Destino = $null; OneDrive = $null; Obs = @() } }
+
+    # ---- 2 e 3. Exchange Online na origem e no destino
+    $lados = @(@{ N = 2; Nome = "origem";  Tenant = $Tenant;        Campo = "Origem"  },
+               @{ N = 3; Nome = "destino"; Tenant = $TenantDestino; Campo = "Destino" })
+    foreach ($l in $lados) {
+        Etapa $l.N ("Ler as pastas no " + $l.Nome) $T
+        if ($Simular) {
+            Sim "abriria o login de admin do Exchange Online do $($l.Tenant)"
+            foreach ($p in $prefixos) {
+                $dados[$p][$l.Campo] = [ordered]@{ "Total da caixa" = 12; "Caixa de Entrada" = 4; "Projeto Nexus" = 1; "Calendário" = 1; "Contatos" = 1 }
+                Sim "leria as pastas de $p@$($l.Tenant)"
+            }
+            continue
+        }
+        Conectar-Exchange $l.Tenant $l.Nome
+        foreach ($p in $prefixos) {
+            $upn = "$p@$($l.Tenant)"
+            try   { $dados[$p][$l.Campo] = Pastas-Kit $upn; Ok "$upn" }
+            catch { $dados[$p].Obs += "sem caixa no $($l.Nome)"; Aviso "$upn : caixa não encontrada" }
+        }
+        Disconnect-ExchangeOnline -Confirm:$false | Out-Null
+    }
+
+    # ---- 4. OneDrive do destino
+    Etapa 4 "Conferir o OneDrive no destino" $T
+    if ($Simular) {
+        Sim "criaria um app temporário só de leitura (Files.Read.All) no $TenantDestino"
+        foreach ($p in $prefixos) { $dados[$p].OneDrive = 2; Sim "procuraria os 2 arquivos do kit no OneDrive de $p" }
+    } elseif ((Pergunta "Conferir também o OneDrive do destino? Pede mais um login de admin. (S/N):") -match "^[sS]") {
+        Info "login de ADMIN do Microsoft Graph do destino ($TenantDestino)"
+        Connect-MgGraph -TenantId $TenantDestino -NoWelcome -Scopes "Application.ReadWrite.All", "AppRoleAssignment.ReadWrite.All"
+        $graphSp = Graph GET "v1.0/servicePrincipals(appId='00000003-0000-0000-c000-000000000000')"
+        $roles   = $graphSp.appRoles | Where-Object { $_.value -in "Files.Read.All", "Application.ReadWrite.OwnedBy" -and $_.allowedMemberTypes -contains "Application" }
+        $script:app = Graph POST "v1.0/applications" @{
+            displayName            = "Kit-Validacao-ODM leitura (temporario, apagar se encontrar)"
+            requiredResourceAccess = @(@{ resourceAppId = $graphSp.appId; resourceAccess = @($roles | ForEach-Object { @{ id = $_.id; type = "Role" } }) })
+        }
+        $sp = Graph POST "v1.0/servicePrincipals" @{ appId = $app.appId }
+        foreach ($r in $roles) { Graph POST "v1.0/servicePrincipals/$($sp.id)/appRoleAssignments" @{ principalId = $sp.id; resourceId = $graphSp.id; appRoleId = $r.id } | Out-Null }
+        Graph POST "v1.0/applications/$($app.id)/owners/`$ref" @{ "@odata.id" = "https://graph.microsoft.com/v1.0/directoryObjects/$($sp.id)" } | Out-Null
+        $segredo = Graph POST "v1.0/applications/$($app.id)/addPassword" @{
+            passwordCredential = @{ displayName = "kit"; endDateTime = (Get-Date).ToUniversalTime().AddHours(1).ToString("o") }
+        }
+        Disconnect-MgGraph | Out-Null
+        Ok "app de leitura criado; esperando 60 s para as permissões valerem..."
+        Start-Sleep -Seconds 60
+        $cred = New-Object System.Management.Automation.PSCredential($app.appId, (ConvertTo-SecureString $segredo.secretText -AsPlainText -Force))
+        Connect-MgGraph -TenantId $TenantDestino -ClientSecretCredential $cred -NoWelcome
+        foreach ($p in $prefixos) {
+            $upn = "$p@$TenantDestino"; $achados = 0
+            foreach ($caminho in "Kit-Validacao.txt", "Projeto%20Nexus/Planilha.csv") {
+                try { Graph GET "v1.0/users/$upn/drive/root:/$($caminho):?`$select=id" | Out-Null; $achados++ } catch { }
+            }
+            $dados[$p].OneDrive = $achados
+            Ok "$upn : $achados de 2 arquivos"
+        }
+        try { Graph DELETE "v1.0/applications/$($app.id)" -Tentativas 2 | Out-Null; $script:app = $null; Ok "app de leitura apagado" }
+        catch { Aviso "o app de leitura não conseguiu se apagar sozinho" }
+        Disconnect-MgGraph | Out-Null
+    } else {
+        Info "pulado"
+    }
+
+    # ---- 5. resultado
+    Etapa 5 "Resultado" $T
+    $relatorio = @(); $ok = 0; $total = 0
+    foreach ($p in $prefixos) {
+        Write-Host ""
+        Write-Host "   > $p" -ForegroundColor White
+        Write-Host ("     {0,-18} {1,7} {2,8}   {3}" -f "Item", "Origem", "Destino", "Situação") -ForegroundColor DarkGray
+        $o = $dados[$p].Origem; $d = $dados[$p].Destino
+        $itens = @("Caixa de Entrada", "Projeto Nexus", "Calendário", "Contatos", "Total da caixa")
+        foreach ($it in $itens) {
+            $vo = if ($o) { $o[$it] } else { $null }
+            $vd = if ($d) { $d[$it] } else { $null }
+            if ($it -eq "Total da caixa") { $sit = "referência"; $cor = "DarkGray" }
+            elseif ($null -eq $vo)        { $sit = "não existe na origem"; $cor = "DarkGray" }
+            elseif ($null -eq $vd)        { $sit = "não existe no destino"; $cor = "Yellow"; $total++ }
+            elseif ($vd -ge $vo)          { $sit = "OK"; $cor = "Green"; $ok++; $total++ }
+            else                          { $sit = "faltam {0}" -f ($vo - $vd); $cor = "Yellow"; $total++ }
+            $fmt = { param($v) if ($null -eq $v) { "-" } else { $v } }
+            Write-Host ("     {0,-18} {1,7} {2,8}   {3}" -f $it, (& $fmt $vo), (& $fmt $vd), $sit) -ForegroundColor $cor
+            $relatorio += [pscustomobject]@{ Conta = $p; Item = $it; Origem = $vo; Destino = $vd; Situacao = $sit }
+        }
+        if ($null -ne $dados[$p].OneDrive) {
+            $vd = $dados[$p].OneDrive; $total++
+            if ($vd -ge 2) { $sit = "OK"; $cor = "Green"; $ok++ } else { $sit = "faltam {0}" -f (2 - $vd); $cor = "Yellow" }
+            Write-Host ("     {0,-18} {1,7} {2,8}   {3}" -f "OneDrive (kit)", 2, $vd, $sit) -ForegroundColor $cor
+            $relatorio += [pscustomobject]@{ Conta = $p; Item = "OneDrive (kit)"; Origem = 2; Destino = $vd; Situacao = $sit }
+        }
+        foreach ($x in $dados[$p].Obs) { Aviso $x }
+    }
+    Write-Host ""
+    Info "'Total da caixa' inclui itens de sistema e serve só de referência; a conferência é pelas pastas do kit."
+    Info "Antes da migração é normal o destino aparecer vazio."
+
+    $arq = if ($Simular) { "(não gerado na simulação)" } else {
+        $f = Join-Path $pastaBase ("validacao-{0}-{1}.csv" -f $Tenant.Split(".")[0], $carimbo)
+        $relatorio | Export-Csv $f -NoTypeInformation -Encoding UTF8; $f
+    }
+    Write-Host ""
+    Linha "═" "DarkCyan"
+    $cor = if ($total -gt 0 -and $ok -eq $total) { "Green" } else { "Yellow" }
+    Write-Host ("   {0} DE {1} ITENS DO KIT CONFERIDOS NO DESTINO" -f $ok, $total) -ForegroundColor $cor
+    if ($Simular) { Write-Host "   SIMULAÇÃO: nada foi lido nem alterado" -ForegroundColor Magenta }
+    Campo "Relatório" $arq
+    Campo "Log"       $arqLog
+    Linha "═" "DarkCyan"
+}
+
 # =============================================================== início
 $pastaBase = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
 $carimbo   = Get-Date -Format "yyyyMMdd-HHmmss"
@@ -139,12 +306,14 @@ try {
         Write-Host ""
         Write-Host "     [1]  Kit completo   " -ForegroundColor Cyan -NoNewline; Write-Host "e-mails, pasta, anexo, reunião, contato e OneDrive" -ForegroundColor Gray
         Write-Host "     [2]  Só OneDrive    " -ForegroundColor Cyan -NoNewline; Write-Host "quando os e-mails já foram criados antes" -ForegroundColor Gray
+        Write-Host "     [4]  Validar        " -ForegroundColor Cyan -NoNewline; Write-Host "compara origem e destino: pastas do kit e OneDrive" -ForegroundColor Gray
         if (-not $Simular) { Write-Host "     [3]  Simular        " -ForegroundColor Magenta -NoNewline; Write-Host "mostra tudo o que seria feito, sem login e sem mudar nada" -ForegroundColor Gray }
         Write-Host "     [0]  Sair" -ForegroundColor Cyan
         switch (Pergunta "Opção:") {
             "1"     { $Modo = "Completo" }
             "2"     { $Modo = "SoOneDrive" }
             "3"     { $Modo = "Completo"; $Simular = $true; Banner }
+            "4"     { $Modo = "Validar" }
             default { $sair = $true; Encerrar "Até a próxima." }
         }
     }
@@ -157,7 +326,8 @@ try {
         $TenantDestino = Pergunta "Tenant de DESTINO (Enter para pular o OneDrive do destino):"
     }
 
-    foreach ($m in "Microsoft.Graph.Authentication", "Microsoft.Online.SharePoint.PowerShell") {
+    $modulos = if ($Modo -eq "Validar") { "Microsoft.Graph.Authentication", "ExchangeOnlineManagement" } else { "Microsoft.Graph.Authentication", "Microsoft.Online.SharePoint.PowerShell" }
+    foreach ($m in $modulos) {
         if ($Simular) { break }
         if ($m -like "*SharePoint*" -and $SemProvisionar) { continue }
         if (-not (Get-Module -ListAvailable $m)) {
@@ -166,6 +336,9 @@ try {
         }
     }
     if (-not $Simular) { Import-Module Microsoft.Graph.Authentication }
+    if (-not $Simular -and $Modo -eq "Validar") { Import-Module ExchangeOnlineManagement }
+
+    if ($Modo -eq "Validar") { Invoke-Validacao } else {
 
     # ----------------------------------------------------------- 1
     Etapa 1 "Conectar e confirmar o tenant"
@@ -412,6 +585,7 @@ try {
     Campo "Manifesto" $arqCsv
     Campo "Log"       $arqLog
     Linha "═" "DarkCyan"
+    }
 }
 catch {
     if ($_.Exception.Message -ne "ENCERRADO") {
@@ -425,7 +599,10 @@ catch {
     }
 }
 finally {
-    if (-not $Simular) { try { Disconnect-MgGraph -ErrorAction SilentlyContinue | Out-Null } catch { } }
+    if (-not $Simular) {
+        try { Disconnect-MgGraph -ErrorAction SilentlyContinue | Out-Null } catch { }
+        if ($Modo -eq "Validar") { try { Disconnect-ExchangeOnline -Confirm:$false -ErrorAction SilentlyContinue | Out-Null } catch { } }
+    }
 }
 
 if ($sair) { break }
