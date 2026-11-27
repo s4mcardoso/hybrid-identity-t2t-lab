@@ -420,7 +420,9 @@ Um bug conhecido, das notas de versão da Quest: se você preenche uma das datas
 
 ### Notification (tela 9)
 
-Manda um e-mail quando a tarefa termina, ou só quando ela falha.
+![Notification](img/66-migrate-mail-notification.png)
+
+Manda um e-mail quando a tarefa termina (**Send notification email once the task is completed**), ou só quando ela falha (**Only in a case of failure**), para os endereços em **Recipients**. O campo já vem com o e-mail de quem está logado.
 
 **Padrão que uso:** em projeto, aviso só em caso de falha, para uma caixa do time de migração e não para o e-mail pessoal de alguém. Numa onda com centenas de caixas, aviso de sucesso vira ruído. No lab, tanto faz.
 
@@ -442,6 +444,26 @@ Manda um e-mail quando a tarefa termina, ou só quando ela falha.
 - Projeto interno ou cliente que aprovou o uso: marcado, ajuda a ler rápido uma onda grande com muitos avisos.
 
 **Padrão que uso:** relatório de erros marcado sempre; resumo por IA desmarcado até ter aprovação da empresa e do cliente.
+
+### Schedule (tela 11)
+
+![Schedule](img/67-migrate-mail-schedule.png)
+
+| Opção | O que faz | Quando usar |
+|---|---|---|
+| **Run now** | Começa assim que clicar em Finish | Teste, piloto, caixa isolada |
+| **Run later** | Salva a tarefa parada, para iniciar à mão | Deixar a onda inteira pronta e revisada antes do dia, e só apertar o play na hora combinada |
+| **Schedule** | Começa sozinha na data e hora escolhidas | Delta do corte numa sexta à noite, onda grande fora do horário comercial |
+| **Priority** | A ordem em que tarefas na fila começam | Quando várias tarefas disputam a fila. Não muda o que já está rodando |
+
+A fila existe porque o Microsoft 365 limita o volume de chamadas por tenant (throttling). Em projeto grande, as tarefas esperam a vez, e a prioridade decide quem vai primeiro.
+
+**Exemplos:**
+- Onda de 400 caixas de uma rede de varejo: tarefas criadas com *Run later* durante a semana, revisadas com calma, e iniciadas na quinta à noite.
+- Corte marcado para sábado: o delta final agendado com *Schedule* para sexta às 20h, e o Switch logo depois.
+- Diretoria (VIP) e histórico antigo na mesma fila: diretoria com prioridade *High*, histórico antigo com *Low*.
+
+**Padrão que uso:** *Run later* nas ondas, para revisar antes de começar; *Schedule* no delta do corte; prioridade *Medium*, com *High* só para VIP e corte e *Low* para histórico antigo.
 
 ---
 
