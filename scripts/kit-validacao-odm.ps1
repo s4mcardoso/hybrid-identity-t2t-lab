@@ -140,7 +140,7 @@ $DESC_CAMADAS = [ordered]@{
     "Caixa"    = "propriedades da caixa: tipo, tamanho, arquivo morto, retenção, encaminhamento, X500 e permissões"
     "Pastas"   = "todas as pastas da caixa, com quantidade de itens e tamanho"
     "Itens"    = "itens do kit um a um: e-mails, anexo com hash, pasta de origem, reunião e contato"
-    "Amostra"  = "e-mails reais da origem procurados no destino pelo Message-ID"
+    "Amostra"  = "e-mails reais da origem (fora do kit) procurados no destino pelo Message-ID"
     "OneDrive" = "inventário do OneDrive arquivo por arquivo, com hash de integridade"
 }
 $ROTULO_CAMADA = @{ Conta = "Conta"; Caixa = "Caixa"; Pastas = "Pastas"; Itens = "Itens do kit"; Amostra = "Amostra"; OneDrive = "OneDrive" }
@@ -450,8 +450,8 @@ function Ler-Exchange($pares, [string]$lado, $camadas) {
                 ArqBytes  = $(if ($arq) { Bytes $arq.TotalItemSize } else { $null })
                 Hold      = [bool]$mbx.LitigationHoldEnabled
                 Encaminha = ($enc -replace '^smtp:', '')
-                Idioma    = $(if ($reg -and $reg.Language) { [string]$reg.Language } else { "-" })
-                Fuso      = $(if ($reg -and $reg.TimeZone) { [string]$reg.TimeZone } else { "-" })
+                Idioma    = $(if ($reg -and $reg.Language) { [string]$reg.Language } else { "não configurado" })
+                Fuso      = $(if ($reg -and $reg.TimeZone) { [string]$reg.TimeZone } else { "não configurado" })
                 Itens     = [int]$st.ItemCount
                 Bytes     = Bytes $st.TotalItemSize
                 Excluidos = [int]$st.DeletedItemCount
@@ -597,7 +597,7 @@ function Ler-Graph($pares, [string]$lado, $camadas) {
         if ("Amostra" -in $camadas -and $Amostra -gt 0 -and $inbox) {
             if ($lado -eq "Origem") {
                 $r = (Graph GET "v1.0/users/$upn/messages?`$top=$Amostra&`$orderby=receivedDateTime%20desc&`$select=internetMessageId,subject,hasAttachments,receivedDateTime,isDraft" -Tentativas 2).value
-                $d.Amostra = @($r | Where-Object { -not $_.isDraft -and $_.internetMessageId } | ForEach-Object {
+                $d.Amostra = @($r | Where-Object { -not $_.isDraft -and $_.internetMessageId -and $_.subject -notlike "Teste migracao*" } | ForEach-Object {
                     [pscustomobject]@{ Id = $_.internetMessageId; Assunto = [string]$_.subject; Anexo = [bool]$_.hasAttachments; Data = ParaData $_.receivedDateTime } })
             } else {
                 $lista = @($script:dados[$p.Nome]["Origem"].Amostra | Where-Object { $_ })
@@ -823,7 +823,8 @@ function Comparar($p) {
             Comparar-Lista $n $cam "Acesso total (FullAccess)" $ob.Perm $db.Perm "Recrie no destino ou use a migração de permissões."
             Comparar-Lista $n $cam "Enviar como (SendAs)" $ob.SendAs $db.SendAs "Recrie no destino."
             Comparar-Lista $n $cam "Permissões do calendário" $ob.CalPerm $db.CalPerm "Confira a delegação de calendário."
-            $idi = if ($ob.Idioma -ne $db.Idioma) { "idiomas diferentes: os nomes das pastas mudam, por isso a comparação de pastas usa o tipo da pasta" } else { "-" }
+            $idi = if ($ob.Idioma -ne $db.Idioma) { "idiomas diferentes: os nomes das pastas mudam, por isso a comparação de pastas usa o tipo da pasta" }
+                   elseif ($db.Idioma -eq "não configurado") { "a caixa ainda não foi aberta no Outlook; as pastas ficam em inglês até o primeiro acesso" } else { "-" }
             Reg $n $cam "Idioma e fuso" ("{0} · {1}" -f $ob.Idioma, $ob.Fuso) ("{0} · {1}" -f $db.Idioma, $db.Fuso) "Info" $idi
         }
     }
