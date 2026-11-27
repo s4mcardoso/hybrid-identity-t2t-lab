@@ -313,6 +313,31 @@ Durante o projeto a caixa continua protegida, porque a origem segue com a reten�
 
 **Regra geral:** conteúdo (e-mail, agenda, contatos, regras, permissões) migra cedo e vai sendo atualizado nos deltas. Estado ou política da caixa (resposta automática, retenção) migra no corte, porque vale o que estiver ligado no dia da virada.
 
+### Sensitivity labels (tela 5)
+
+![Sensitivity labels](img/61-migrate-mail-labels.png)
+
+Rótulos de confidencialidade (sensitivity labels) são as etiquetas do Microsoft Purview, como "Confidencial" ou "Uso interno". Alguns rótulos também **criptografam** o e-mail, e essa criptografia é amarrada ao tenant de origem. Se o e-mail chega ao destino ainda criptografado com a chave da origem, o usuário perde o acesso a ele quando a origem é desligada. É esse o aviso em vermelho da tela.
+
+A caixa só funciona depois de um fluxo próprio, que precisa ser feito antes da migração:
+
+1. Criar os rótulos no destino. A definição do rótulo não migra, só o conteúdo rotulado.
+2. Descobrir os rótulos nos dois tenants (Discover Sensitivity Labels).
+3. Casar o rótulo da origem com o do destino, por seleção ou por arquivo.
+4. Só então marcar esta opção na tarefa de migração.
+
+| Situação | O que fazer |
+|---|---|
+| A origem não usa rótulos | Deixar desmarcado |
+| A origem usa rótulos só como etiqueta, sem criptografia | Fazer o fluxo para o rótulo chegar no destino, ou aceitar perder a etiqueta, com o cliente sabendo |
+| A origem usa rótulos com criptografia | Obrigatório fazer o fluxo e marcar. Sem isso, o e-mail chega mas não abre depois que a origem sai do ar |
+
+**Exemplos:**
+- Comércio de 300 pessoas que nunca configurou Purview: desmarcado.
+- Banco ou empresa de saúde com rótulo "Confidencial" que criptografa e-mail com dados de cliente ou paciente: fluxo completo antes da pré-carga, com o time de segurança do cliente criando os rótulos equivalentes no destino.
+
+**Padrão que uso:** no levantamento inicial, pergunto ao cliente e confiro no Purview se existem rótulos com criptografia em uso. Se não existem, fica desmarcado. Se existem, o fluxo de rótulos entra no plano antes da pré-carga.
+
 ---
 
 *As próximas telas do assistente vão entrando aqui.*
