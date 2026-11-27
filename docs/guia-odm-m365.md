@@ -395,6 +395,29 @@ Com a pasta personalizada, as permissões de pastas que não são de e-mail (com
 
 **Padrão que uso:** *Migrate all folders*, sem pasta personalizada. E a mesma escolha em todas as passadas do projeto: mudar a configuração de pastas entre a pré-carga e os deltas deixa o destino inconsistente.
 
+### Date Range (tela 8)
+
+![Date Range](img/64-migrate-mail-date-range.png)
+
+Ao marcar **Only migrate mail within specified date range**, aparecem dois campos: excluir e-mail antes de uma data e excluir e-mail depois de uma data. Sem marcar, vai todo o histórico.
+
+Um bug conhecido, das notas de versão da Quest: se você preenche uma das datas e depois apaga, o assistente não deixa terminar. A saída é fechar e criar a tarefa de novo.
+
+**Os três desenhos mais comuns:**
+
+| Desenho | Como fica | Quando usar |
+|---|---|---|
+| **Tudo** | Caixa desmarcada | O padrão, quando o cliente não tem regra de guarda e o prazo é confortável |
+| **Só os últimos anos** | Excluir antes de uma data, por exemplo de 5 anos atrás | Cliente com política de guarda de e-mail, ou que quer reduzir volume. O resto fica na origem ou num backup |
+| **Recente primeiro** | Primeira tarefa só com os últimos 30 a 90 dias; depois outra tarefa com o histórico antigo | Prazo apertado: o usuário entra no destino já com o que usa no dia a dia, e o histórico chega nos dias seguintes |
+
+**Exemplos:**
+- Escritório de 80 pessoas, sem regra de guarda e com um mês até o corte: tudo.
+- Distribuidora com política interna de guardar 5 anos de e-mail: excluir o que tem mais de 5 anos, com a decisão registrada.
+- Empresa comprada que precisa estar no tenant novo em duas semanas, com caixas de 30 GB: recente primeiro, e o histórico migra depois do corte.
+
+**Padrão que uso:** caixa desmarcada, todo o histórico. Filtro de data só com pedido do cliente ou com prazo que não comporta a migração inteira antes do corte.
+
 ---
 
 *As próximas telas do assistente vão entrando aqui.*
